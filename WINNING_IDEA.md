@@ -1,6 +1,6 @@
 # RevenueCat Shipaton 2026: Winning Idea Dossier
 
-> **Status:** One idea selected; no product name assigned; no implementation started.
+> **Status:** One idea selected; no product name assigned. The Tier 0 executable, domain, and local development-harness foundation is under construction. No signed app, device/provider path, or production deployment has been established.
 > **Deadline:** September 30, 2026 at 11:45 PM PT.
 > **Primary award targets:** RevenueCat Design Award and Next Gen Award.
 > **Secondary fit:** HAMM and Most Viral only if real results support them.
@@ -179,6 +179,8 @@ The app should not use a weekly subscription, fake countdown, or artificial expo
 
 ### Load-bearing integration
 
+The production integration is not implemented yet. It must satisfy all of the following before it can support a provider-readiness or award claim:
+
 - RevenueCat SDK configures products and purchases.
 - Entitlement state gates full-quality export and advanced processing.
 - Restore purchases is complete.
@@ -225,7 +227,7 @@ AVCaptureSession
 - Metal/Metal Performance Shaders for tiled spectral analysis and filtering.
 - Accelerate/vDSP for FFT, windowing, and signal metrics.
 - Core Image only for non-critical compositing/export.
-- RevenueCat Purchases SDK and the already provisioned entitlement/offerings.
+- RevenueCat Purchases SDK, with offerings and entitlements configured and verified at the provider boundary before they are described as ready.
 - StoreKit sandbox tests.
 - XCTest plus prerecorded synthetic frame sequences.
 - Local-only diagnostics; no cloud backend required for the core.
@@ -537,49 +539,25 @@ The before/after loop is naturally shareable and development produces real lesso
 - 3:2 Devpost thumbnail and gallery.
 - README: supported devices, calibration limits, metrics, architecture, privacy, build steps, RevenueCat sandbox, known failures.
 
-## Repository plan
+## Repository layout contract
+
+ADR-0001 establishes the implementation layout. Portable domain and policy code lives under `Sources/<Area>Domain`; deterministic package and property tests live under the root `Tests/` directory; architecture decisions live under the root `adr/` directory. Apple-framework and provider adapters belong under `App/<Area>/` only when they contain working application code. An `App/` directory is therefore a future boundary, not an empty scaffold or evidence that the signed app exists.
 
 ```text
 /
-├── README.md
-├── LICENSE
-├── App/
-│   ├── Application/
-│   ├── Camera/
-│   │   ├── CaptureSession.swift
-│   │   ├── ManualControls.swift
-│   │   ├── FrameSampler.swift
-│   │   └── Recorder.swift
-│   ├── Analysis/
-│   │   ├── BandingMetric.swift
-│   │   ├── FrequencyEstimator.swift
-│   │   ├── CandidateSearch.swift
-│   │   └── Confidence.swift
-│   ├── Metal/
-│   │   ├── MoireDetector.metal
-│   │   ├── NotchFilter.metal
-│   │   └── Composite.metal
-│   ├── Purchases/
-│   ├── UI/
-│   ├── Export/
-│   ├── Privacy/
-│   └── Accessibility/
-├── Tests/
-│   ├── SyntheticFrames/
-│   ├── Metrics/
-│   ├── Purchases/
-│   └── UI/
-├── TestPatterns/
-├── Evaluation/
-│   ├── device-matrix.csv
-│   ├── sources.csv
-│   └── results.md
-└── docs/
-    ├── architecture.svg
-    ├── signal-model.md
-    ├── privacy.md
-    ├── monetization.md
-    └── demo-runbook.md
+├── Package.swift
+├── Sources/
+│   ├── CaptureDomain/
+│   ├── RuntimeConfiguration/
+│   └── <Area>Domain/          # Camera, Analysis, Metal, UI, Purchases, Export, Evaluation
+├── Tests/                     # package, property, integration, and later app/E2E tests
+├── App/                       # future; only working application/adapters under <Area>/
+│   └── <Area>/
+├── adr/                       # architecture decisions, including ADR-0001
+├── docs/                      # runbooks, threat models, evaluation documentation
+├── evidence/                  # regenerable artifacts only
+├── scripts/                   # repository-local development harness
+└── tools/                     # verification and policy tooling
 ```
 
 ## What would make this lose anyway

@@ -2,7 +2,7 @@
 
 > Reference dossier for the Devpost hackathon this repo submits to.
 > Generated Aug 9, 5:19 PM PT. Devpost account `risban933`.
-> **This repo has no project name and no code yet by design.**
+> **Repository status:** no product name has been assigned. The Tier 0 executable, domain, and local development-harness foundation is under construction; the repository is not yet in production.
 
 ## At a glance
 

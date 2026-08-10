@@ -6,7 +6,11 @@
 
 ## Repository status
 
-Implementation has not started. The repository currently contains the authoritative product and competition specifications. This README defines the production target that future code must satisfy; it does not claim that planned commands or components already exist.
+**Not in production yet.** The worktree now contains an early Tier 0 foundation: a strict Swift 6 package with portable domain/policy modules under `Sources/`, deterministic foundation tests under `Tests/`, repository-local loopback development-harness code, and verification/CI policy files. The portable package build, tests, and strict format check, plus the local harness lifecycle, have been exercised in the current worktree. Those are construction surfaces, not a signed iOS application or proof of the capture workflow.
+
+No app target, working AVFoundation/Metal/RevenueCat provider adapters, physical-device evaluation, TestFlight/App Store distribution, production RevenueCat configuration, or production deployment is established by this foundation. A local package check or healthy loopback harness proves only that local foundation surface; it does not establish app, device, provider, release-gate, or production readiness.
+
+Read the authoritative documents in this order:
 
 | Document | Authority |
 |---|---|
@@ -14,8 +18,9 @@ Implementation has not started. The repository currently contains the authoritat
 | [WINNING_IDEA.md](./WINNING_IDEA.md) | Selected concept, hard technical core, validation, build order, demo and risk analysis |
 | [README.md](./README.md) | Product contract, architecture, production and release expectations |
 | [AGENTS.md](./AGENTS.md) | Binding implementation rules for every coding agent working in this repository |
+| [GOAL.md](./GOAL.md) | Standing goal-mode contract: port isolation, production definition, tier order, ratchets, and work selection |
 
-If these documents disagree, preserve the external requirements in HACKATHON.md, then the product intent in WINNING_IDEA.md, and resolve the conflict explicitly in an ADR instead of guessing.
+If these documents disagree, preserve the external requirements in HACKATHON.md, then the product intent in WINNING_IDEA.md, and resolve the conflict explicitly in an ADR instead of guessing. AGENTS.md governs how the system is built; GOAL.md governs how long work continues and in what order. Neither overrides HACKATHON.md.
 
 ## Product contract
 
@@ -50,9 +55,9 @@ A non-goal may become part of the product only after the core release gates pass
 
 ## Production architecture
 
-Signed native iOS/iPadOS app with device/lens/format support matrix. Media remains on device; RevenueCat manages products/entitlements, not video. Next Gen source/video path remains independently reproducible.
+The target is a signed native iOS/iPadOS app with a device/lens/format support matrix. Media remains on device; RevenueCat manages products/entitlements, not video. The Next Gen source/video path remains independently reproducible.
 
-### Planned component boundaries
+### Component boundaries
 
 | Area | Production responsibility |
 |---|---|
@@ -65,6 +70,8 @@ Signed native iOS/iPadOS app with device/lens/format support matrix. Media remai
 | `Evaluation` | Original test patterns, devices, sources, results |
 
 Dependencies should flow from applications/adapters toward typed domain packages. Domain logic must remain testable without UI, network, cloud credentials, or third-party services. Infrastructure code may assemble components but must not become the only place where product invariants are enforced.
+
+ADR-0001 places the portable domain and policy layer in `Sources/<Area>Domain`. Future working Apple-framework and provider adapters belong in `App/<Area>/` and depend inward on those modules. The presence of a domain module does not mean its production area is complete, and `App/` must not be created as an empty progress scaffold.
 
 ### Target technology foundation
 
@@ -140,43 +147,61 @@ Performance budgets must be set before optimization and enforced in CI for suppo
 
 Accessibility is a release gate, not a polish task. The production interface must include semantic structure, keyboard support, visible focus, sufficient contrast, non-color status cues, reduced-motion behavior where relevant, zoom/reflow, readable errors, and an equivalent representation for information conveyed through canvas, charts, audio, maps, camera, or animation.
 
-## Planned repository layout
+## Repository layout
+
+The current foundation and future application boundary follow ADR-0001:
 
 ```text
 /
 ├── README.md                 # Product and operating contract
 ├── AGENTS.md                 # Binding implementation rules for coding agents
+├── GOAL.md                   # Standing execution, production, and verification contract
 ├── HACKATHON.md              # External rules and submission facts
 ├── WINNING_IDEA.md           # Selected product/technical blueprint
-├── Camera/
-├── Analysis/
-├── Metal/
-├── UI/
-├── Purchases/
-├── Export/
-├── Evaluation/
-├── tests/                    # Unit, property, integration, E2E, resilience
-├── docs/                     # ADRs, threat model, runbooks, evaluation
-└── infra/                    # Reproducible deployment and environment policy
+├── Package.swift
+├── Sources/
+│   ├── CaptureDomain/
+│   ├── RuntimeConfiguration/
+│   └── <Area>Domain/         # Camera, Analysis, Metal, UI, Purchases, Export, Evaluation
+├── Tests/                    # root package/property tests; later integration and app tests
+├── App/                      # future working Apple/provider adapters under App/<Area>/
+│   └── <Area>/
+├── adr/                      # root architecture decisions
+├── docs/                     # threat models, runbooks, evaluation documentation
+├── evidence/                 # regenerable verification artifacts
+├── scripts/                  # repository-local development harness
+└── tools/                    # verification and policy tooling
 ```
 
-This is a boundary contract, not a command to create empty directories. Add a directory when it owns working code, tests, and documentation.
+`Sources/`, `Tests/`, `adr/`, `docs/`, `evidence/`, `scripts/`, and `tools/` exist in the Tier 0 worktree. `App/` is intentionally future-facing until a working signed application or adapter slice exists. This is a boundary contract, not a command to create empty directories.
 
 ## Development command contract
 
-No commands are advertised as working until the corresponding toolchain is committed. The first production scaffold must expose one documented, cross-platform command surface, preferably through a checked-in task runner or Makefile:
+The root `Makefile` now defines the repository's canonical, non-divergent command surface. Target existence is not a passing claim: except where the status column says otherwise, a target remains **defined but not verified by this documentation change** until its output is captured from the appropriate clean-checkout or intended-environment run.
 
-| Command | Required behavior |
-|---|---|
-| `bootstrap` | Verify tool versions, install locked dependencies, initialize only local non-secret state |
-| `check` | Format check, lint, type/static analysis, schema/config validation |
-| `test` | Deterministic unit and property suites |
-| `test-integration` | Real boundary tests using isolated local/test dependencies |
-| `test-e2e` | Supported user workflows and failure states |
-| `eval` | Reproduce committed domain evaluation and metrics |
-| `build` | Produce release artifacts from a clean checkout |
-| `run-local` | Start the complete local system or a documented production-equivalent subset |
-| `release-check` | Run all blocking gates, artifact/SBOM generation, and policy checks |
+| Command | Required behavior | Current evidence boundary |
+|---|---|---|
+| `make help` | List the canonical contributor-facing commands and their scopes | Exercised successfully in this worktree |
+| `make bootstrap` | Verify toolchain contracts, recreate Node dependencies from the lockfile, and keep npm/browser cache and scratch under symlink-refusing `.dev/` paths | Defined; clean-checkout result not claimed here |
+| `make check` | Aggregate format, lint, policy, and strict type checks | Defined; aggregate result not claimed here |
+| `make build` | Compile the portable Swift package in release mode with warnings blocking | Defined; package build is not app/device evidence |
+| `make test` | Run deterministic Swift and Python unit/property suites | Defined; test success is not release-gate evidence |
+| `make lint` / `make format-check` | Enforce formatting, text, policy, boundary, and repository checks | Defined; result not claimed here |
+| `make format` | Apply the deterministic Swift formatting contract | Defined; mutating helper, not a verification gate by itself |
+| `make typecheck` | Run the strict Swift 6 debug build | Defined; package-only scope |
+| `make verify-all` | Run the single canonical local verification contract, recreate the locked Node tree, hash source/index state, and inventory only allowlisted ignored outputs | Defined; a clean-checkout pass is not claimed here |
+| `make dev:preflight` / `make dev:up` / `make dev:health` / `make dev:down` | Manage only the loopback services in ports 4220-4229 and verify semantic readiness | Exercised successfully in this worktree on `127.0.0.1:4220-4223` |
+| `make test-integration` | Exercise all four real isolated loopback services | Defined; local harness scope only |
+| `make test-e2e` | Own and health-check all four local services, then browser-test the original-pattern outcome through allocated port 4222 without reusing a listener | Defined; local harness E2E only, not an iOS app E2E test |
+| `make eval` | Run the current typed compatibility-evidence policy oracle | Defined; no physical result or compatibility claim |
+| `make dependency-audit` / `make sbom` | Audit locked development dependencies and generate development-harness dependency artifacts | Defined; not an iOS release SBOM |
+| `make verify-clean` | Refuse dirty/staged source, then run only `verify-all` from detached `HEAD` with a hard deadline and process-group cleanup | Defined; passing output not claimed here |
+| `make full-verify` / `make release-check` | Alias the canonical `verify-all` contract without divergent behavior | Defined; not proof that product release gates pass |
+| `make run-local` | Start the four owned loopback services and require semantic readiness | Defined; same local-only boundary as `dev:*` |
+
+The successful local `dev:*` lifecycle establishes local harness readiness only. It does not establish a signed app, physical-device behavior, a RevenueCat provider integration, release-gate success, clean-checkout success, or production readiness.
+
+All redirectable verification writes are repository-local: npm cache and Playwright browsers use `.dev/cache/`, temporary files use `.dev/tmp/`, and logs use `.dev/logs/`. Initialization rejects symlinked or non-directory path components before any npm or browser command. `verify-all` requires tracked, staged, and non-ignored untracked content to remain byte-stable; changing ignored build/cache output is permitted only within the explicit inventory enforced by `tools/repository_state.py`.
 
 A new contributor should be able to move from a clean checkout to a verified local system without tribal knowledge.
 

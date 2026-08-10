@@ -1,0 +1,61 @@
+name: verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: revenuecat-shipaton-2026-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Clean contract verification
+    runs-on: macos-26
+    timeout-minutes: 25
+    env:
+      CI: "true"
+      COMPOSE_PROJECT_NAME: revenuecat-shipaton-2026
+      PYTHONDONTWRITEBYTECODE: "1"
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - name: Check out immutable source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize repository-local writable namespace
+        shell: bash
+        run: |
+          python3 tools/init_workspace.py
+          {
+            printf 'npm_config_cache=%s/.dev/cache/npm\n' "$GITHUB_WORKSPACE"
+            printf 'NPM_CONFIG_CACHE=%s/.dev/cache/npm\n' "$GITHUB_WORKSPACE"
+            printf 'TMPDIR=%s/.dev/tmp\n' "$GITHUB_WORKSPACE"
+            printf 'PLAYWRIGHT_BROWSERS_PATH=%s/.dev/cache/ms-playwright\n' "$GITHUB_WORKSPACE"
+          } >> "$GITHUB_ENV"
+
+      - name: Select pinned Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Run the complete verification contract
+        shell: bash
+        run: |
+          set -o pipefail
+          make verify-all 2>&1 | tee .dev/logs/verify-all.log
+
+      - name: Archive the exact verification log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: revenuecat-shipaton-2026-verify-${{ github.sha }}
+          path: .dev/logs/verify-all.log
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
