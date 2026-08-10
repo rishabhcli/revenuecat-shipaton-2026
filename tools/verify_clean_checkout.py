@@ -6,8 +6,10 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import secrets
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -17,6 +19,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
+REPOSITORY_NAME = "revenuecat-shipaton-2026"
 DEFAULT_TIMEOUT_SECONDS = 1_200
 TERMINATION_GRACE_SECONDS = 10
 
@@ -159,6 +162,156 @@ def append_output(lines: list[str], output: str) -> None:
         lines.extend(output.rstrip("\n").splitlines())
 
 
+def same_identity(left: os.stat_result, right: os.stat_result) -> bool:
+    return left.st_dev == right.st_dev and left.st_ino == right.st_ino
+
+
+def fd_backed_directory(fd: int, expected: os.stat_result) -> Path | None:
+    for base in (Path("/dev/fd"), Path("/proc/self/fd")):
+        candidate = base / str(fd)
+        duplicate: int | None = None
+        try:
+            duplicate = os.open(candidate, os.O_RDONLY | os.O_DIRECTORY)
+        except OSError:
+            continue
+        try:
+            if same_identity(os.fstat(duplicate), expected):
+                return candidate
+        finally:
+            os.close(duplicate)
+    return None
+
+
+def create_bound_container(parent_fd: int, parent_status: os.stat_result, prefix: str) -> str:
+    """Create a private directory relative to a held parent descriptor."""
+
+    fd_parent = fd_backed_directory(parent_fd, parent_status)
+    if fd_parent is not None:
+        return Path(tempfile.mkdtemp(prefix=prefix, dir=fd_parent)).name
+
+    if os.mkdir not in os.supports_dir_fd:
+        raise CleanVerificationError(
+            "platform lacks fd-relative directory allocation support"
+        )
+    for _ in range(100):
+        name = f"{prefix}{secrets.token_hex(8)}"
+        try:
+            os.mkdir(name, mode=0o700, dir_fd=parent_fd)
+        except FileExistsError:
+            continue
+        except OSError as error:
+            raise CleanVerificationError(
+                f"clean worktree allocation failed: {error}"
+            ) from error
+        return name
+    raise CleanVerificationError("clean worktree allocation exhausted unique names")
+
+
+def create_worktree_location(parent: Path, revision: str) -> tuple[Path, Path]:
+    parent = Path(os.path.abspath(parent))
+    try:
+        initial_status = parent.lstat()
+    except OSError as error:
+        raise CleanVerificationError("clean worktree parent is not a real directory") from error
+    if stat.S_ISLNK(initial_status.st_mode) or not stat.S_ISDIR(initial_status.st_mode):
+        raise CleanVerificationError("clean worktree parent is not a real directory")
+
+    required_flags = ("O_DIRECTORY", "O_NOFOLLOW")
+    if any(not hasattr(os, flag) for flag in required_flags):
+        raise CleanVerificationError("platform lacks no-follow directory allocation support")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        parent_fd = os.open(parent, flags)
+    except OSError as error:
+        raise CleanVerificationError("clean worktree parent is not a stable real directory") from error
+
+    container_name: str | None = None
+    container_fd: int | None = None
+    keep_container = False
+    try:
+        opened_status = os.fstat(parent_fd)
+        current_status = parent.lstat()
+        if not same_identity(initial_status, opened_status) or not same_identity(
+            opened_status, current_status
+        ):
+            raise CleanVerificationError(
+                "clean worktree parent identity changed during allocation"
+            )
+        container_name = create_bound_container(
+            parent_fd, opened_status, prefix=f"clean-{revision[:12]}-"
+        )
+        container = parent / container_name
+        worktree = container / REPOSITORY_NAME
+
+        try:
+            current_status = parent.lstat()
+        except OSError as error:
+            raise CleanVerificationError(
+                "clean worktree parent identity changed during allocation"
+            ) from error
+        if not same_identity(opened_status, current_status):
+            raise CleanVerificationError(
+                "clean worktree parent identity changed during allocation"
+            )
+
+        bound_status = os.stat(
+            container_name, dir_fd=parent_fd, follow_symlinks=False
+        )
+        intended_status = container.lstat()
+        if (
+            stat.S_ISLNK(bound_status.st_mode)
+            or not stat.S_ISDIR(bound_status.st_mode)
+            or stat.S_ISLNK(intended_status.st_mode)
+            or not stat.S_ISDIR(intended_status.st_mode)
+            or not same_identity(bound_status, intended_status)
+        ):
+            raise CleanVerificationError("clean worktree container identity mismatch")
+        try:
+            container_fd = os.open(
+                container_name, flags, dir_fd=parent_fd
+            )
+        except OSError as error:
+            raise CleanVerificationError("clean worktree container identity mismatch") from error
+        if not same_identity(os.fstat(container_fd), intended_status):
+            raise CleanVerificationError("clean worktree container identity mismatch")
+
+        try:
+            os.stat(REPOSITORY_NAME, dir_fd=container_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise CleanVerificationError("clean worktree child unexpectedly exists")
+        if worktree.exists() or worktree.is_symlink():
+            raise CleanVerificationError("clean worktree child unexpectedly exists")
+        keep_container = True
+        return container, worktree
+    except OSError as error:
+        raise CleanVerificationError(f"clean worktree allocation failed: {error}") from error
+    finally:
+        if container_fd is not None:
+            os.close(container_fd)
+        if container_name is not None and not keep_container:
+            try:
+                os.rmdir(container_name, dir_fd=parent_fd)
+            except OSError:
+                pass
+        os.close(parent_fd)
+
+
+def remove_empty_worktree_container(container: Path, worktree: Path) -> str | None:
+    """Remove only an empty container after its child worktree is safely gone."""
+
+    if worktree.exists() or worktree.is_symlink():
+        return None
+    if container.is_symlink():
+        return f"refusing symlink clean-worktree container: {container}"
+    try:
+        container.rmdir()
+    except OSError as error:
+        return f"cannot remove clean-worktree container: {error}"
+    return None
+
+
 def stop_worktree_services(
     worktree: Path, environment: dict[str, str], timeout_seconds: float = 30
 ) -> str | None:
@@ -196,11 +349,15 @@ def cleanup_worktree(
             timeout_seconds=60,
         )
         if result.returncode != 0:
-            failures.append(
-                f"git worktree remove exited {result.returncode}: {result.output.strip()}"
-            )
+            return [
+                f"git worktree remove exited {result.returncode}: {result.output.strip()}; "
+                f"retained worktree and PID evidence at {worktree}"
+            ]
     except CleanVerificationError as error:
-        failures.append(str(error))
+        return [
+            f"git worktree remove failed: {error}; "
+            f"retained worktree and PID evidence at {worktree}"
+        ]
 
     if worktree.exists():
         try:
@@ -249,8 +406,11 @@ def main() -> int:
         return 1
 
     worktree_parent = ROOT / ".dev" / "tmp"
-    worktree = Path(tempfile.mkdtemp(prefix=f"clean-{revision[:12]}-", dir=worktree_parent))
-    shutil.rmtree(worktree)
+    try:
+        container, worktree = create_worktree_location(worktree_parent, revision)
+    except (OSError, CleanVerificationError) as error:
+        print(f"clean-verify:error:cannot allocate clean worktree: {error}", file=sys.stderr)
+        return 1
     timestamp = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
     command = ["make", "verify-all"]
     environment = clean_environment(worktree, revision)
@@ -322,6 +482,9 @@ def main() -> int:
                     )
             except CleanVerificationError as error:
                 cleanup_failures.append(str(error))
+        container_failure = remove_empty_worktree_container(container, worktree)
+        if container_failure is not None:
+            cleanup_failures.append(container_failure)
         for cleanup_failure in cleanup_failures:
             lines.append(f"cleanup_error={cleanup_failure}")
             print(f"clean-verify:cleanup-error:{cleanup_failure}", file=sys.stderr)

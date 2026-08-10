@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path, PurePosixPath
+from unittest import mock
 
 from tools import (
     bootstrap,
@@ -301,6 +302,74 @@ class RepositoryStateTests(unittest.TestCase):
 
 
 class CleanCheckoutHarnessTests(unittest.TestCase):
+    def test_clean_worktree_uses_exact_repository_basename_inside_unique_container(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            first_container, first_worktree = verify_clean_checkout.create_worktree_location(
+                parent, "a" * 40
+            )
+            second_container, second_worktree = verify_clean_checkout.create_worktree_location(
+                parent, "a" * 40
+            )
+            self.assertNotEqual(first_container, second_container)
+            self.assertEqual(first_worktree.name, verify_clean_checkout.REPOSITORY_NAME)
+            self.assertEqual(second_worktree.name, verify_clean_checkout.REPOSITORY_NAME)
+            self.assertEqual(first_worktree.parent, first_container)
+            self.assertFalse(first_worktree.exists())
+            self.assertIsNone(
+                verify_clean_checkout.remove_empty_worktree_container(
+                    first_container, first_worktree
+                )
+            )
+            self.assertIsNone(
+                verify_clean_checkout.remove_empty_worktree_container(
+                    second_container, second_worktree
+                )
+            )
+            self.assertFalse(first_container.exists())
+            self.assertFalse(second_container.exists())
+
+    def test_clean_worktree_parent_symlink_is_rejected_before_allocation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as outside:
+            parent = Path(temporary) / "parent"
+            parent.symlink_to(outside, target_is_directory=True)
+            with self.assertRaisesRegex(
+                verify_clean_checkout.CleanVerificationError,
+                r"clean worktree parent is not a real directory",
+            ):
+                verify_clean_checkout.create_worktree_location(parent, "a" * 40)
+            self.assertEqual(list(Path(outside).iterdir()), [])
+
+    def test_clean_worktree_parent_swap_during_allocation_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            parent = root / "parent"
+            displaced = root / "displaced-parent"
+            parent.mkdir()
+            real_allocate = verify_clean_checkout.create_bound_container
+
+            def allocate_then_swap(
+                parent_fd: int, parent_status: os.stat_result, prefix: str
+            ) -> str:
+                container_name = real_allocate(parent_fd, parent_status, prefix)
+                parent.rename(displaced)
+                parent.mkdir()
+                return container_name
+
+            with mock.patch.object(
+                verify_clean_checkout,
+                "create_bound_container",
+                side_effect=allocate_then_swap,
+            ):
+                with self.assertRaisesRegex(
+                    verify_clean_checkout.CleanVerificationError,
+                    r"clean worktree parent identity changed during allocation",
+                ):
+                    verify_clean_checkout.create_worktree_location(parent, "a" * 40)
+
+            self.assertEqual(list(parent.iterdir()), [])
+            self.assertEqual(list(displaced.iterdir()), [])
+
     def test_clean_source_precondition_rejects_staged_and_untracked_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -388,7 +457,8 @@ pid_file.unlink()
     def test_failed_detached_shutdown_retains_pid_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            worktree = root / "detached"
+            container = root / "clean-container"
+            worktree = container / verify_clean_checkout.REPOSITORY_NAME
             (worktree / "scripts").mkdir(parents=True)
             pid_directory = worktree / ".dev" / "pids"
             pid_directory.mkdir(parents=True)
@@ -401,6 +471,63 @@ pid_file.unlink()
             )
             self.assertTrue(any("retained worktree and PID evidence" in item for item in failures))
             self.assertTrue((pid_directory / "service.pid").is_file())
+            self.assertIsNone(
+                verify_clean_checkout.remove_empty_worktree_container(container, worktree)
+            )
+            self.assertTrue(container.is_dir())
+            self.assertTrue((pid_directory / "service.pid").is_file())
+
+    def test_git_worktree_remove_failures_retain_pid_evidence(self) -> None:
+        remove_outcomes: tuple[object, ...] = (
+            verify_clean_checkout.CommandResult(7, "simulated remove refusal"),
+            verify_clean_checkout.CleanVerificationError("simulated runner failure"),
+        )
+        for remove_outcome in remove_outcomes:
+            with self.subTest(remove_outcome=type(remove_outcome).__name__):
+                with tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    container = root / "clean-container"
+                    worktree = container / verify_clean_checkout.REPOSITORY_NAME
+                    (worktree / "scripts").mkdir(parents=True)
+                    pid_file = worktree / ".dev" / "pids" / "service.pid"
+                    pid_file.parent.mkdir(parents=True)
+                    pid_file.write_text("4242\n", encoding="utf-8")
+                    (worktree / "scripts" / "devctl.py").write_text(
+                        "raise SystemExit(0)\n", encoding="utf-8"
+                    )
+                    calls: list[list[str]] = []
+
+                    def fake_run(command: list[str], **_: object) -> object:
+                        calls.append(command)
+                        if len(calls) == 1:
+                            return verify_clean_checkout.CommandResult(0, "down ok")
+                        if isinstance(remove_outcome, BaseException):
+                            raise remove_outcome
+                        return remove_outcome
+
+                    with mock.patch.object(
+                        verify_clean_checkout, "run_bounded", side_effect=fake_run
+                    ):
+                        failures = verify_clean_checkout.cleanup_worktree(
+                            root, worktree, os.environ.copy()
+                        )
+
+                    self.assertEqual(len(calls), 2)
+                    self.assertEqual(calls[1][:3], ["git", "worktree", "remove"])
+                    self.assertTrue(
+                        any(
+                            "retained worktree and PID evidence" in failure
+                            for failure in failures
+                        )
+                    )
+                    self.assertTrue(worktree.is_dir())
+                    self.assertEqual(pid_file.read_text(encoding="utf-8"), "4242\n")
+                    self.assertIsNone(
+                        verify_clean_checkout.remove_empty_worktree_container(
+                            container, worktree
+                        )
+                    )
+                    self.assertTrue(container.is_dir())
 
 
 class SecretPatternTests(unittest.TestCase):

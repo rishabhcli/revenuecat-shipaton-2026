@@ -72,3 +72,21 @@ This file is append-only. Each entry records delivered behavior, exact verificat
 ### Next item selected by GOAL.md section 10.1
 
 - The lowest failing release gate is still Tier 0 clean/CI evidence. Stage and review the exact 60-file foundation, commit it, run `make verify-clean` against committed `HEAD`, commit the regenerable evidence, push the branch, and require the SHA-pinned workflow to pass before starting the Tier 1 I2 fail-closed live-correction boundary.
+
+## 2026-08-10T10:19:19Z — Detached clean-check identity failure and bounded repair
+
+### Failure observed without a false green
+
+- The first `make verify-clean` run against foundation commit `ee83f823120995a7370102a69bf4de2685815c91` correctly exited non-zero during detached `dev:preflight`. The detached worktree's generated basename was not the repository identity required by `devctl`, which returned `[repository_mismatch]` rather than starting services under ambiguous ownership.
+- The failed detached worktree was removed by the existing bounded cleanup path, `git worktree list` returned only the source checkout, the failed `evidence/tier0/verify-all-clean.txt` was deleted rather than archived as success evidence, and `make dev:preflight && make dev:up && make dev:health` restored all four standing services.
+
+### Repair and verification
+
+- Changed clean-check allocation to create a unique private container while preserving the exact child basename `revenuecat-shipaton-2026`. Allocation is relative to a held `O_DIRECTORY | O_NOFOLLOW` parent descriptor, refuses symlinked or identity-swapped parents, verifies the bound and lexical container identities, and removes failed allocation remnants through the held descriptor.
+- A detached shutdown failure or failed/raised `git worktree remove` now retains the worktree and available PID/diagnostic evidence without pathname deletion or pruning. The unique container is removed only after the child worktree is safely absent.
+- `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer make test-tools` passed 28/28 tests, including exact-basename uniqueness, parent symlink refusal, live parent-swap refusal, bounded process termination, authenticated detached cleanup, and worktree-removal failure retention. `make policy-check`, `python3 tools/check_text.py`, `actionlint .github/workflows/verify.yml`, `python3 -m py_compile tools/verify_clean_checkout.py tools/tests/test_contract_tools.py`, and `git diff --check` passed.
+- Independent hostile re-review reported no remaining P1/P2 in the repair. No detached clean-check success or CI success is claimed by this entry.
+
+### Current truth and next item selected by GOAL.md section 10.1
+
+- The repository remains not in production, and Tier 0 remains open because detached clean and GitHub Actions evidence are still absent. Commit this bounded repair, rerun `make verify-clean` against that committed revision, restore the standing services, archive only a successful evidence artifact, then push and require the exact SHA-pinned workflow revision to pass.
