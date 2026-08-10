@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import json
 import os
 import signal
 import subprocess
@@ -15,6 +16,7 @@ from tools import (
     bootstrap,
     check_policy,
     check_text,
+    ci_evidence,
     init_workspace,
     repository_state,
     verify_clean_checkout,
@@ -300,6 +302,110 @@ class RepositoryStateTests(unittest.TestCase):
             repository_state.decode_git_paths(
                 b"one\0two\0three\0", label="untracked", max_paths=2
             )
+
+
+class HostedVerificationEvidenceTests(unittest.TestCase):
+    COMMIT = "a" * 40
+
+    def run_document(self, **overrides: object) -> dict[str, object]:
+        document: dict[str, object] = {
+            "id": 42,
+            "name": "verify",
+            "path": ".github/workflows/verify.yml",
+            "head_sha": self.COMMIT,
+            "head_branch": "main",
+            "event": "push",
+            "status": "completed",
+            "conclusion": "success",
+            "run_attempt": 1,
+            "html_url": "https://example.invalid/run/42",
+            "created_at": "2026-08-10T20:14:23Z",
+            "updated_at": "2026-08-10T20:16:47Z",
+        }
+        document.update(overrides)
+        return document
+
+    def test_only_the_required_workflow_for_the_exact_commit_is_considered(self) -> None:
+        payload = {
+            "workflow_runs": [
+                self.run_document(),
+                self.run_document(path=".github/workflows/other.yml", name="other"),
+                self.run_document(head_sha="b" * 40),
+                self.run_document(name="verify-nightly"),
+            ]
+        }
+        with mock.patch.object(ci_evidence, "run_bounded", return_value=json.dumps(payload)):
+            runs = ci_evidence.verification_runs("owner/repo", self.COMMIT)
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0]["id"], 42)
+
+    def test_absent_incomplete_and_failed_runs_are_refused_with_stable_codes(self) -> None:
+        for runs, code in (
+            ([], "run_absent"),
+            ([self.run_document(status="in_progress", conclusion=None)], "run_incomplete"),
+            ([self.run_document(conclusion="failure")], "run_not_successful"),
+            ([self.run_document(conclusion="cancelled")], "run_not_successful"),
+            (
+                [self.run_document(), self.run_document(id=43, conclusion="failure")],
+                "run_not_successful",
+            ),
+        ):
+            with self.subTest(code=code):
+                with self.assertRaises(ci_evidence.EvidenceError) as raised:
+                    ci_evidence.select_successful_run(runs, self.COMMIT)
+                self.assertEqual(raised.exception.code, code)
+
+    def test_the_latest_successful_attempt_is_selected_and_rendered(self) -> None:
+        runs = [
+            self.run_document(id=42, run_attempt=1),
+            self.run_document(id=43, run_attempt=2),
+        ]
+        selected = ci_evidence.select_successful_run(runs, self.COMMIT)
+        self.assertEqual(selected["id"], 43)
+        rendered = ci_evidence.render(self.COMMIT, "owner/repo", selected, len(runs))
+        self.assertIn(f"source_commit={self.COMMIT}", rendered)
+        self.assertIn("conclusion=success", rendered)
+        self.assertIn("matching_runs=2", rendered)
+        self.assertIn(f"command=make ci-evidence COMMIT={self.COMMIT}", rendered)
+        self.assertIn(
+            "scope=hosted repository verification contract only "
+            "(not app, device, provider, or production evidence)",
+            rendered,
+        )
+        self.assertTrue(rendered.endswith("\n"))
+
+    def test_a_malformed_or_unbounded_response_is_refused(self) -> None:
+        with mock.patch.object(ci_evidence, "run_bounded", return_value="not json"):
+            with self.assertRaises(ci_evidence.EvidenceError) as invalid:
+                ci_evidence.verification_runs("owner/repo", self.COMMIT)
+        self.assertEqual(invalid.exception.code, "response_invalid")
+
+        with mock.patch.object(ci_evidence, "run_bounded", return_value=json.dumps({})):
+            with self.assertRaises(ci_evidence.EvidenceError) as missing:
+                ci_evidence.verification_runs("owner/repo", self.COMMIT)
+        self.assertEqual(missing.exception.code, "response_invalid")
+
+        oversized = "x" * (ci_evidence.MAX_API_BYTES + 1)
+        with mock.patch.object(
+            ci_evidence.subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess([], 0, oversized, ""),
+        ):
+            with self.assertRaises(ci_evidence.EvidenceError) as huge:
+                ci_evidence.run_bounded(["gh"], timeout_seconds=1.0)
+        self.assertEqual(huge.exception.code, "response_too_large")
+
+    def test_a_non_commit_reference_is_resolved_or_refused(self) -> None:
+        self.assertEqual(ci_evidence.resolve_commit(self.COMMIT), self.COMMIT)
+        with mock.patch.object(ci_evidence, "run_bounded", return_value="not-a-sha\n"):
+            with self.assertRaises(ci_evidence.EvidenceError) as raised:
+                ci_evidence.resolve_commit("HEAD")
+        self.assertEqual(raised.exception.code, "commit_unresolved")
+
+    def test_the_committed_command_and_target_stay_in_agreement(self) -> None:
+        makefile = (ci_evidence.ROOT / "Makefile").read_text(encoding="utf-8")
+        self.assertIn('\t@$(PYTHON) tools/ci_evidence.py --commit "$(COMMIT)"', makefile)
+        self.assertIn("ci-evidence", makefile.split("help:")[0])
 
 
 class CleanCheckoutHarnessTests(unittest.TestCase):

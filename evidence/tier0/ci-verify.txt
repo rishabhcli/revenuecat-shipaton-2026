@@ -1,0 +1,21 @@
+# Hosted clean-checkout verification evidence
+generated_at=2026-08-10T20:18:52Z
+command=make ci-evidence COMMIT=e1e420727b12d2b182cf6a20f014d9e61afc6de1
+repository=rishabhcli/revenuecat-shipaton-2026
+source_commit=e1e420727b12d2b182cf6a20f014d9e61afc6de1
+required_workflow=.github/workflows/verify.yml
+matching_runs=1
+scope=hosted repository verification contract only (not app, device, provider, or production evidence)
+--- run ---
+id=31428035078
+name=verify
+path=.github/workflows/verify.yml
+head_sha=e1e420727b12d2b182cf6a20f014d9e61afc6de1
+head_branch=main
+event=push
+status=completed
+conclusion=success
+run_attempt=1
+html_url=https://github.com/rishabhcli/revenuecat-shipaton-2026/actions/runs/31428035078
+created_at=2026-08-10T20:14:23Z
+updated_at=2026-08-10T20:16:47Z

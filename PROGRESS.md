@@ -298,3 +298,36 @@ This file is append-only. Each entry records delivered behavior, exact verificat
 ### Next item selected by `GOAL.md` section 10.1
 
 - Push this repair and read the exact SHA-pinned GitHub Actions run. Only a green run for the exact committed revision, together with a `make verify-clean` pass for that same revision, allows Tier 0 to exit and its evidence to be archived.
+
+## 2026-08-10T20:35:00Z — Tier 0 gate reached: both clean-checkout gates green for one exact commit
+
+### Evidence
+
+- `make verify-clean` passed for commit `e1e420727b12d2b182cf6a20f014d9e61afc6de1` in 2 minutes 30 seconds on the local Apple-silicon host and wrote `evidence/tier0/verify-all-clean.txt`, which records `source_commit`, `source_precondition=clean`, `command=make verify-all`, `timeout_seconds=1800`, the complete detached output, and `exit_code=0`.
+- GitHub Actions run [31428035078](https://github.com/rishabhcli/revenuecat-shipaton-2026/actions/runs/31428035078) for the **same commit** concluded `success`, ending in `verify-all:ok dependency-install=lock-derived tracked-content=stable index=stable untracked-content=stable ignored-artifacts=allowlisted services=ownership-stopped`. This is the first green hosted verification for this repository; the previous two runs, `31402791964` and `31404123335`, were red.
+- Both hosted and local runs exercise the same canonical `verify-all` contract but on different toolchains: the runner reported `python=3.14.6 swift=6.3.3 xcode=26.6.0`, the local clean checkout reported `python=3.13.15 swift=6.4.0 xcode=27.0.0`. The contract therefore holds across two independent toolchain sets rather than on one machine.
+
+### Behavior delivered
+
+- Added `tools/ci_evidence.py` and the committed command `make ci-evidence COMMIT=<sha>` so the hosted result is regenerable rather than pasted. It resolves the commit, asks GitHub for the workflow runs with that exact `head_sha`, keeps only runs whose `path` and `name` match `.github/workflows/verify.yml`, and writes an artifact **only** when at least one matching run exists and every matching run completed with `success`. Absent, incomplete, and unsuccessful states are separate refusals with the stable codes `run_absent`, `run_incomplete`, and `run_not_successful`; malformed, oversized, timed-out, and unavailable responses are refused as `response_invalid`, `response_too_large`, `command_timeout`, and `command_unavailable`. The artifact labels its own scope as hosted repository verification only, never app, device, provider, or production evidence.
+- Generated `evidence/tier0/ci-verify.txt` for `e1e4207` with that command.
+- `README.md` now states the measured status of `verify-clean` and `ci-evidence` instead of "result not claimed here", naming the exact commit and artifact for each.
+
+### Commands run and evidence
+
+- `make ci-evidence COMMIT=e1e420727b12d2b182cf6a20f014d9e61afc6de1` printed `ci-evidence:ok commit=e1e4207... run=31428035078`.
+- `make test-tools` passed 37/37 (up from 31). New tests: only the required workflow for the exact commit is considered, with runs for other workflows, other names, and other commits excluded; absent, incomplete, failed, cancelled, and mixed-result run sets are each refused with their stable code; the latest successful attempt is selected and rendered with its scope label; malformed, missing-array, and oversized responses are refused; a non-commit reference is resolved or refused; and the committed Make target matches the tool invocation.
+- `make lint` and `make verify-all` passed after the change.
+
+### What is now true that was not true before
+
+- One exact commit has passed the complete canonical verification contract from a clean checkout both locally and on hosted CI, and both results are recorded as artifacts regenerable by committed commands.
+
+### What is still not true, stated precisely
+
+- This is Tier 0 evidence about the repository's own verification contract. It is not evidence about the product. There is still no signed iOS target, no AVFoundation capture, no Metal filter, no RevenueCat provider integration, no device or physical-source measurement, and no production deployment. Tiers 1 through 13 remain open and every release gate G1-G6 remains red.
+- The commit that carries these artifacts is necessarily a later commit than the one they measure. Each artifact names the commit it measured, and `make ci-evidence COMMIT=<sha>` regenerates the hosted claim for any commit on demand.
+
+### Next item selected by `GOAL.md` section 10.1
+
+- With the dev harness healthy and no failing gate that the repository can currently turn green, section 10.1 selects item 7, the lowest-numbered incomplete tier: **Tier 1**. Begin with invariant I2, "unsupported/unstable conditions are visible and recording confidence never turns green", because a false green is the highest-impact wrong result a user can be shown. I2 currently has typed policy and property attacks but no boundary assertion under component failure, no structured operational event, no alert contract, and no runbook. Deliver those, then continue through the remaining invariants by the same standard.

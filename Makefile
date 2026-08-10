@@ -30,7 +30,7 @@ SWIFT_FORMAT := xcrun swift-format
 .PHONY: help workspace-init locked-install verify-node-install install-e2e-browser \
 	bootstrap check build test test-tools test-python lint format format-check \
 	typecheck test-integration test-e2e eval run-local verify-all full-verify \
-	release-check verify-clean policy-check dependency-audit sbom \
+	release-check verify-clean ci-evidence policy-check dependency-audit sbom \
 	dev\:preflight dev\:up dev\:down dev\:health
 
 help:
@@ -44,6 +44,7 @@ help:
 	  'eval              run the current deterministic compatibility-evidence oracle' \
 	  'verify-all        canonical complete local verification contract' \
 	  'verify-clean      run verify-all from a detached clean checkout of HEAD' \
+	  'ci-evidence       record the hosted verification result for COMMIT, or refuse' \
 	  'release-check     alias of the canonical verification contract' \
 	  'dev:preflight     validate exclusive ports and repository-local namespaces' \
 	  'dev:up            start only this repository services on 127.0.0.1:4220-4223' \
@@ -183,5 +184,8 @@ release-check: verify-all
 verify-clean: workspace-init
 	@$(PYTHON) scripts/devctl.py down
 	@$(PYTHON) tools/verify_clean_checkout.py --timeout-seconds "$(CLEAN_VERIFY_TIMEOUT_SECONDS)"
+
+ci-evidence: workspace-init
+	@$(PYTHON) tools/ci_evidence.py --commit "$(COMMIT)"
 
 run-local: dev\:up dev\:health

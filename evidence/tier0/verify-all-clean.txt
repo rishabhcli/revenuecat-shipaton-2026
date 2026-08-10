@@ -1,0 +1,470 @@
+# Clean-checkout verification evidence
+generated_at=2026-08-10T20:14:52Z
+source_commit=e1e420727b12d2b182cf6a20f014d9e61afc6de1
+source_precondition=clean (no staged, unstaged, or untracked paths)
+dirty_tree=false (detached worktree)
+seed=not-applicable (deterministic suites declare their own seeds)
+command=make verify-all
+timeout_seconds=1800
+--- output ---
+workspace-init:ok writable_scope=.dev cache=npm,playwright tmp=repository-local
+repository-state:capture:ok tracked=60 untracked=0 ignored=none
+workspace-init:ok writable_scope=.dev cache=npm,playwright tmp=repository-local
+bootstrap:ok lsof=/usr/sbin/lsof python=3.13.15 swift=6.4.0 xcode=27.0.0 swift-format=main metal-toolchain=installed node=26.5.1 npm=11.17.0 npm-lock=consistent
+workspace-init:ok writable_scope=.dev cache=npm,playwright tmp=repository-local
+npm ci --ignore-scripts --no-audit --no-fund
+
+added 4 packages in 2s
+npm notice
+npm notice New major version of npm available! 11.17.0 -> 12.0.2
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.0.2
+npm notice To update run: npm install -g npm@12.0.2
+npm notice
+locked-install:ok source=package-lock.json scripts=disabled cache=repository-local
+found 0 vulnerabilities
+dev:preflight ok: .dev/ is isolated and ports 4220-4229 have no foreign listeners
+  evaluation: 127.0.0.1:4220
+  revenuecat-webhook: 127.0.0.1:4221
+  test-patterns: 127.0.0.1:4222
+  artifacts: 127.0.0.1:4223
+dev:up ok: every allocated service returned its owned readiness document
+  evaluation: pid 60488, http://127.0.0.1:4220
+  revenuecat-webhook: pid 60489, http://127.0.0.1:4221
+  test-patterns: pid 60493, http://127.0.0.1:4222
+  artifacts: pid 60494, http://127.0.0.1:4223
+dev:health ok: all services are ready (TCP acceptance alone was not used)
+  evaluation: ready
+  revenuecat-webhook: ready
+  test-patterns: ready
+  artifacts: ready
+workspace-init:ok writable_scope=.dev cache=npm,playwright tmp=repository-local
+text-check:ok files=0
+workspace-init:ok writable_scope=.dev cache=npm,playwright tmp=repository-local
+text-check:ok files=0
+policy-check:ok ports=4220,4221,4222,4223 ci_actions=sha-pinned writable_scope=repository-local foundation_dependencies=internal-only foundation_imports=allowlisted
+lint:ok python-bytecode=valid swift-format=strict policy=valid
+workspace-init:ok writable_scope=.dev cache=npm,playwright tmp=repository-local
+Building for debugging...
+[Computing dependencies]
+[Pre-planning 1 / 298]
+[Planning deferred tasks]
+[67 / 140]
+[68 / 141] CaptureDomain
+[70 / 147]
+[74 / 147] CaptureDomain
+[85 / 152] RuntimeConfiguration
+[95 / 162] CameraDomain
+[108 / 163] RuntimeConfiguration
+[123 / 166] EvaluationDomain
+[131 / 168] AnalysisDomain
+[144 / 169] UIDomain
+[147 / 171] ExportDomain
+[149 / 171] CaptureDomain
+[149 / 171] UIDomain
+[157 / 171] AnalysisDomain
+[160 / 171] EvaluationDomain
+[161 / 171] MetalDomain
+[164 / 171] PurchasesDomain
+[168 / 171] CameraDomain
+[170 / 171] UIDomain
+Build complete! (24.68 sec)
+typecheck:ok swift-language-mode=6 strict-concurrency=complete
+workspace-init:ok writable_scope=.dev cache=npm,playwright tmp=repository-local
+Building for production...
+[Computing dependencies]
+[Pre-planning 1 / 298]
+[Planning deferred tasks]
+[59 / 123]
+[60 / 124] CaptureDomain
+[63 / 127]
+[64 / 127] CaptureDomain
+[75 / 132] RuntimeConfiguration
+[85 / 137] MetalDomain
+[91 / 137] PurchasesDomain
+[98 / 138] ExportDomain
+[107 / 140] CameraDomain
+[109 / 141] ExportDomain
+[115 / 141] EvaluationDomain
+[121 / 141] AnalysisDomain
+[128 / 142] UIDomain
+[130 / 143] RuntimeConfiguration
+[136 / 143] UIDomain
+Build complete! (6.86 sec)
+build:ok scope=portable-domain-package (not iOS/device/production evidence)
+workspace-init:ok writable_scope=.dev cache=npm,playwright tmp=repository-local
+test_semantic_version_accepts_patchless_version (test_contract_tools.BootstrapParsingTests.test_semantic_version_accepts_patchless_version) ... ok
+test_semantic_version_rejects_unversioned_output (test_contract_tools.BootstrapParsingTests.test_semantic_version_rejects_unversioned_output) ... ok
+test_bounded_runner_terminates_after_deadline (test_contract_tools.CleanCheckoutHarnessTests.test_bounded_runner_terminates_after_deadline) ... ok
+test_ci_archives_the_service_logs_that_explain_a_lifecycle_failure (test_contract_tools.CleanCheckoutHarnessTests.test_ci_archives_the_service_logs_that_explain_a_lifecycle_failure) ... ok
+test_clean_environment_removes_inherited_make_bypass_flags (test_contract_tools.CleanCheckoutHarnessTests.test_clean_environment_removes_inherited_make_bypass_flags) ... ok
+test_clean_source_precondition_rejects_staged_and_untracked_paths (test_contract_tools.CleanCheckoutHarnessTests.test_clean_source_precondition_rejects_staged_and_untracked_paths) ... ok
+test_clean_timeout_accepts_declared_default_and_refuses_larger_values (test_contract_tools.CleanCheckoutHarnessTests.test_clean_timeout_accepts_declared_default_and_refuses_larger_values) ... ok
+test_clean_worktree_parent_swap_during_allocation_is_rejected (test_contract_tools.CleanCheckoutHarnessTests.test_clean_worktree_parent_swap_during_allocation_is_rejected) ... ok
+test_clean_worktree_parent_symlink_is_rejected_before_allocation (test_contract_tools.CleanCheckoutHarnessTests.test_clean_worktree_parent_symlink_is_rejected_before_allocation) ... ok
+test_clean_worktree_uses_exact_repository_basename_inside_unique_container (test_contract_tools.CleanCheckoutHarnessTests.test_clean_worktree_uses_exact_repository_basename_inside_unique_container) ... ok
+test_detached_service_session_is_stopped_before_worktree_cleanup (test_contract_tools.CleanCheckoutHarnessTests.test_detached_service_session_is_stopped_before_worktree_cleanup) ... ok
+test_failed_detached_shutdown_retains_pid_evidence (test_contract_tools.CleanCheckoutHarnessTests.test_failed_detached_shutdown_retains_pid_evidence) ... ok
+test_git_worktree_remove_failures_retain_pid_evidence (test_contract_tools.CleanCheckoutHarnessTests.test_git_worktree_remove_failures_retain_pid_evidence) ... ok
+test_workflow_archive_paths_reads_every_block_scalar_entry (test_contract_tools.CleanCheckoutHarnessTests.test_workflow_archive_paths_reads_every_block_scalar_entry) ... ok
+test_access_modified_and_selective_imports_are_detected (test_contract_tools.PolicyContractTests.test_access_modified_and_selective_imports_are_detected) ... ok
+test_dependency_allowlist_rejects_cross_domain_edge (test_contract_tools.PolicyContractTests.test_dependency_allowlist_rejects_cross_domain_edge) ... ok
+test_exclusive_allocated_ports_are_exact (test_contract_tools.PolicyContractTests.test_exclusive_allocated_ports_are_exact) ... ok
+test_forbidden_port_set_does_not_overlap_repository_block (test_contract_tools.PolicyContractTests.test_forbidden_port_set_does_not_overlap_repository_block) ... ok
+test_foundation_boundary_rejects_external_import_and_dependency (test_contract_tools.PolicyContractTests.test_foundation_boundary_rejects_external_import_and_dependency) ... ok
+test_make_npm_target_requires_safe_workspace_prerequisite (test_contract_tools.PolicyContractTests.test_make_npm_target_requires_safe_workspace_prerequisite) ... ok
+test_test_target_rejects_external_import_and_missing_strict_flags (test_contract_tools.PolicyContractTests.test_test_target_rejects_external_import_and_missing_strict_flags) ... ok
+test_content_hash_catches_second_change_to_already_dirty_file (test_contract_tools.RepositoryStateTests.test_content_hash_catches_second_change_to_already_dirty_file) ... ok
+test_git_path_decoder_refuses_excessive_entry_count (test_contract_tools.RepositoryStateTests.test_git_path_decoder_refuses_excessive_entry_count) ... ok
+test_huge_untracked_file_is_refused_before_hashing (test_contract_tools.RepositoryStateTests.test_huge_untracked_file_is_refused_before_hashing) ... ok
+test_snapshot_writer_refuses_symlink_output (test_contract_tools.RepositoryStateTests.test_snapshot_writer_refuses_symlink_output) ... ok
+test_symlinked_ignored_namespace_root_is_rejected (test_contract_tools.RepositoryStateTests.test_symlinked_ignored_namespace_root_is_rejected) ... ok
+test_unknown_ignored_namespace_is_rejected (test_contract_tools.RepositoryStateTests.test_unknown_ignored_namespace_is_rejected) ... ok
+test_normal_source_text_does_not_match_secret_patterns (test_contract_tools.SecretPatternTests.test_normal_source_text_does_not_match_secret_patterns) ... ok
+test_private_key_header_is_rejected (test_contract_tools.SecretPatternTests.test_private_key_header_is_rejected) ... ok
+test_workspace_initialization_creates_real_directories (test_contract_tools.WorkspaceInitializationTests.test_workspace_initialization_creates_real_directories) ... ok
+test_workspace_initialization_refuses_symlinked_parent (test_contract_tools.WorkspaceInitializationTests.test_workspace_initialization_refuses_symlinked_parent) ... ok
+
+----------------------------------------------------------------------
+Ran 31 tests in 2.853s
+
+OK
+test_gitignore_contains_dev_directory_rule (test_dev_contract.CommittedSurfaceTests.test_gitignore_contains_dev_directory_rule) ... ok
+test_no_broad_process_kill_commands_exist (test_dev_contract.CommittedSurfaceTests.test_no_broad_process_kill_commands_exist) ... ok
+test_playwright_uses_devctl_owned_complete_block_without_reuse (test_dev_contract.CommittedSurfaceTests.test_playwright_uses_devctl_owned_complete_block_without_reuse) ... ok
+test_e2e_services_share_one_decreasing_total_startup_budget (test_dev_contract.E2EStartupDeadlineTests.test_e2e_services_share_one_decreasing_total_startup_budget) ... dev:e2e-server ready: all four owned services passed semantic readiness
+dev:e2e-server stopped: all four owned services self-stopped
+ok
+test_concurrency_saturation_returns_and_logs_bounded_503 (test_dev_contract.HTTPServiceContractTests.test_concurrency_saturation_returns_and_logs_bounded_503) ... ok
+test_configured_webhook_auth_accepts_and_deduplicates_sandbox_event (test_dev_contract.HTTPServiceContractTests.test_configured_webhook_auth_accepts_and_deduplicates_sandbox_event) ... ok
+test_logger_failure_latches_readiness_unhealthy_until_reconfiguration (test_dev_contract.HTTPServiceContractTests.test_logger_failure_latches_readiness_unhealthy_until_reconfiguration) ... ok
+test_request_logs_include_safe_outcome_and_refusal_fields (test_dev_contract.HTTPServiceContractTests.test_request_logs_include_safe_outcome_and_refusal_fields) ... ok
+test_shutdown_requires_raw_token_but_readiness_exposes_only_digest (test_dev_contract.HTTPServiceContractTests.test_shutdown_requires_raw_token_but_readiness_exposes_only_digest) ... ok
+test_unmatched_secret_path_and_query_are_never_persisted (test_dev_contract.HTTPServiceContractTests.test_unmatched_secret_path_and_query_are_never_persisted) ... ok
+test_webhook_audit_failure_returns_uncertain_and_degrades_readiness (test_dev_contract.HTTPServiceContractTests.test_webhook_audit_failure_returns_uncertain_and_degrades_readiness) ... ok
+test_webhook_is_deterministically_unconfigured_without_explicit_adapter_config (test_dev_contract.HTTPServiceContractTests.test_webhook_is_deterministically_unconfigured_without_explicit_adapter_config) ... ok
+test_command_health_deadline_begins_before_configuration_load (test_dev_contract.LifecycleDeadlineTests.test_command_health_deadline_begins_before_configuration_load) ... ok
+test_command_up_deadline_includes_lock_preflight_and_spawn (test_dev_contract.LifecycleDeadlineTests.test_command_up_deadline_includes_lock_preflight_and_spawn) ... ok
+test_controller_lock_contention_exhausts_its_absolute_deadline (test_dev_contract.LifecycleDeadlineTests.test_controller_lock_contention_exhausts_its_absolute_deadline) ... ok
+test_controller_lock_contention_observes_e2e_cancellation (test_dev_contract.LifecycleDeadlineTests.test_controller_lock_contention_observes_e2e_cancellation) ... ok
+test_down_shared_50_second_deadline_caps_lock_and_every_stop (test_dev_contract.LifecycleDeadlineTests.test_down_shared_50_second_deadline_caps_lock_and_every_stop) ... ok
+test_e2e_cleanup_envelope_includes_lock_and_ignores_start_cancellation (test_dev_contract.LifecycleDeadlineTests.test_e2e_cleanup_envelope_includes_lock_and_ignores_start_cancellation) ...   stopped evaluation pid 5000
+  stopped revenuecat-webhook pid 5001
+  stopped test-patterns pid 5002
+  stopped artifacts pid 5003
+dev:down ok: only authenticated repository-owned services self-stopped
+dev:e2e-server ready: all four owned services passed semantic readiness
+dev:e2e-server stopped: all four owned services self-stopped
+ok
+test_listener_probe_uses_only_remaining_preflight_time (test_dev_contract.LifecycleDeadlineTests.test_listener_probe_uses_only_remaining_preflight_time) ... ok
+test_preflight_refuses_when_a_local_phase_consumes_the_deadline (test_dev_contract.LifecycleDeadlineTests.test_preflight_refuses_when_a_local_phase_consumes_the_deadline) ... ok
+test_process_inspection_uses_only_remaining_preflight_time (test_dev_contract.LifecycleDeadlineTests.test_process_inspection_uses_only_remaining_preflight_time) ... ok
+test_readiness_http_uses_only_remaining_command_time (test_dev_contract.LifecycleDeadlineTests.test_readiness_http_uses_only_remaining_command_time) ... ok
+test_stop_deadline_starts_before_process_ownership_inspection (test_dev_contract.LifecycleDeadlineTests.test_stop_deadline_starts_before_process_ownership_inspection) ... ok
+test_a_healthy_service_contributes_no_log_tail (test_dev_contract.LifecycleDiagnosticsTests.test_a_healthy_service_contributes_no_log_tail) ... ok
+test_a_retained_child_that_crashed_reports_its_exit_status (test_dev_contract.LifecycleDiagnosticsTests.test_a_retained_child_that_crashed_reports_its_exit_status) ... ok
+test_a_running_child_never_short_circuits_the_readiness_wait (test_dev_contract.LifecycleDiagnosticsTests.test_a_running_child_never_short_circuits_the_readiness_wait) ... ok
+test_an_exited_child_fails_by_cause_instead_of_spinning_on_a_zombie (test_dev_contract.LifecycleDiagnosticsTests.test_an_exited_child_fails_by_cause_instead_of_spinning_on_a_zombie) ... ok
+test_diagnostics_report_their_own_failure_instead_of_masking_it (test_dev_contract.LifecycleDiagnosticsTests.test_diagnostics_report_their_own_failure_instead_of_masking_it) ... ok
+test_every_diagnosed_command_emits_diagnostics_on_failure (test_dev_contract.LifecycleDiagnosticsTests.test_every_diagnosed_command_emits_diagnostics_on_failure) ... ok
+test_live_process_without_a_listener_is_distinguished_from_an_exited_one (test_dev_contract.LifecycleDiagnosticsTests.test_live_process_without_a_listener_is_distinguished_from_an_exited_one) ... ok
+test_log_tail_is_bounded_and_never_reveals_the_instance_token (test_dev_contract.LifecycleDiagnosticsTests.test_log_tail_is_bounded_and_never_reveals_the_instance_token) ... ok
+test_up_timeout_names_the_consuming_phase_and_the_unspawned_services (test_dev_contract.LifecycleDiagnosticsTests.test_up_timeout_names_the_consuming_phase_and_the_unspawned_services) ... ok
+test_log_symlink_is_refused (test_dev_contract.LogRetentionTests.test_log_symlink_is_refused) ... ok
+test_oversized_existing_log_fails_closed (test_dev_contract.LogRetentionTests.test_oversized_existing_log_fails_closed) ... ok
+test_oversized_log_event_fails_closed (test_dev_contract.LogRetentionTests.test_oversized_log_event_fails_closed) ... ok
+test_structured_logs_rotate_with_a_hard_backup_count (test_dev_contract.LogRetentionTests.test_structured_logs_rotate_with_a_hard_backup_count) ... ok
+test_a_correctly_stopped_service_can_restart_on_the_same_port (test_dev_contract.LoopbackBindContractTests.test_a_correctly_stopped_service_can_restart_on_the_same_port) ... ok
+test_address_reuse_never_admits_a_second_live_listener (test_dev_contract.LoopbackBindContractTests.test_address_reuse_never_admits_a_second_live_listener) ... ok
+test_bind_never_performs_a_reverse_dns_lookup (test_dev_contract.LoopbackBindContractTests.test_bind_never_performs_a_reverse_dns_lookup) ... ok
+test_service_logs_the_bind_phase_before_it_can_stall (test_dev_contract.LoopbackBindContractTests.test_service_logs_the_bind_phase_before_it_can_stall) ... ok
+test_devctl_ignores_hostile_proxy_environment (test_dev_contract.LoopbackHTTPClientTests.test_devctl_ignores_hostile_proxy_environment) ... ok
+test_devctl_refuses_redirect_without_contacting_destination (test_dev_contract.LoopbackHTTPClientTests.test_devctl_refuses_redirect_without_contacting_destination) ... ok
+test_probe_builds_proxy_disabled_redirect_refusing_opener (test_dev_contract.LoopbackHTTPClientTests.test_probe_builds_proxy_disabled_redirect_refusing_opener) ... ok
+test_probe_readiness_digest_must_match_validated_pid_record (test_dev_contract.LoopbackHTTPClientTests.test_probe_readiness_digest_must_match_validated_pid_record) ... ok
+test_probe_refuses_redirect_response (test_dev_contract.LoopbackHTTPClientTests.test_probe_refuses_redirect_response) ... ok
+test_authenticated_self_shutdown_removes_only_the_same_record (test_dev_contract.PidOwnershipTests.test_authenticated_self_shutdown_removes_only_the_same_record) ... ok
+test_authenticated_shutdown_allows_loaded_exit_within_bounded_grace (test_dev_contract.PidOwnershipTests.test_authenticated_shutdown_allows_loaded_exit_within_bounded_grace) ... ok
+test_changed_pid_record_is_never_removed (test_dev_contract.PidOwnershipTests.test_changed_pid_record_is_never_removed) ... ok
+test_pid_identity_change_after_shutdown_is_refused_without_signal (test_dev_contract.PidOwnershipTests.test_pid_identity_change_after_shutdown_is_refused_without_signal) ... ok
+test_pid_record_round_trip_is_strict (test_dev_contract.PidOwnershipTests.test_pid_record_round_trip_is_strict) ... ok
+test_pid_record_symlink_is_refused (test_dev_contract.PidOwnershipTests.test_pid_record_symlink_is_refused) ... ok
+test_pid_record_symlink_swap_is_refused_by_descriptor_open (test_dev_contract.PidOwnershipTests.test_pid_record_symlink_swap_is_refused_by_descriptor_open) ... ok
+test_process_identity_requires_every_owned_argument (test_dev_contract.PidOwnershipTests.test_process_identity_requires_every_owned_argument) ... ok
+test_retained_child_wait_uses_only_remaining_total_shutdown_budget (test_dev_contract.PidOwnershipTests.test_retained_child_wait_uses_only_remaining_total_shutdown_budget) ... ok
+test_shutdown_endpoint_failure_never_falls_back_to_pid_signal (test_dev_contract.PidOwnershipTests.test_shutdown_endpoint_failure_never_falls_back_to_pid_signal) ... ok
+test_stop_refuses_unproven_pid_without_signalling (test_dev_contract.PidOwnershipTests.test_stop_refuses_unproven_pid_without_signalling) ... ok
+test_duplicate_service_ports_are_refused (test_dev_contract.PortConfigurationTests.test_duplicate_service_ports_are_refused) ... ok
+test_exact_configuration_is_parsed_as_data (test_dev_contract.PortConfigurationTests.test_exact_configuration_is_parsed_as_data) ... ok
+test_missing_service_port_is_refused (test_dev_contract.PortConfigurationTests.test_missing_service_port_is_refused) ... ok
+test_port_outside_exclusive_block_is_refused (test_dev_contract.PortConfigurationTests.test_port_outside_exclusive_block_is_refused) ... ok
+test_shell_syntax_is_refused_instead_of_executed (test_dev_contract.PortConfigurationTests.test_shell_syntax_is_refused_instead_of_executed) ... ok
+test_any_foreign_listener_in_reserved_block_fails_loudly (test_dev_contract.PreflightRefusalTests.test_any_foreign_listener_in_reserved_block_fails_loudly) ... ok
+test_bootstrap_requires_lsof (test_dev_contract.PreflightRefusalTests.test_bootstrap_requires_lsof) ... ok
+test_listener_inspection_never_accepts_out_of_block_port (test_dev_contract.PreflightRefusalTests.test_listener_inspection_never_accepts_out_of_block_port) ... ok
+test_lsof_absence_fails_closed_with_stable_code (test_dev_contract.PreflightRefusalTests.test_lsof_absence_fails_closed_with_stable_code) ... ok
+test_lsof_machine_output_is_mapped_to_the_exact_port (test_dev_contract.PreflightRefusalTests.test_lsof_machine_output_is_mapped_to_the_exact_port) ... ok
+test_preflight_creates_only_isolated_dev_state (test_dev_contract.PreflightRefusalTests.test_preflight_creates_only_isolated_dev_state) ... ok
+test_preflight_refuses_when_dev_is_not_ignored (test_dev_contract.PreflightRefusalTests.test_preflight_refuses_when_dev_is_not_ignored) ... ok
+test_real_foreign_listener_is_discovered_without_being_killed (test_dev_contract.PreflightRefusalTests.test_real_foreign_listener_is_discovered_without_being_killed) ... ok
+test_semantic_owned_readiness_is_accepted (test_dev_contract.ReadinessValidationTests.test_semantic_owned_readiness_is_accepted) ... ok
+test_tcp_or_http_acceptance_without_json_contract_is_not_ready (test_dev_contract.ReadinessValidationTests.test_tcp_or_http_acceptance_without_json_contract_is_not_ready) ... ok
+test_test_pattern_service_must_disclaim_calibration (test_dev_contract.ReadinessValidationTests.test_test_pattern_service_must_disclaim_calibration) ... ok
+test_wrong_instance_token_is_not_ready (test_dev_contract.ReadinessValidationTests.test_wrong_instance_token_is_not_ready) ... ok
+test_absent_evaluation_file_is_a_truthful_empty_state (test_dev_contract.ServiceTruthfulnessTests.test_absent_evaluation_file_is_a_truthful_empty_state) ... ok
+test_artifact_file_limit_is_enforced_before_sorting (test_dev_contract.ServiceTruthfulnessTests.test_artifact_file_limit_is_enforced_before_sorting) ... ok
+test_artifact_inventory_does_not_claim_uploads (test_dev_contract.ServiceTruthfulnessTests.test_artifact_inventory_does_not_claim_uploads) ... ok
+test_artifact_inventory_refuses_directory_symlink_swap (test_dev_contract.ServiceTruthfulnessTests.test_artifact_inventory_refuses_directory_symlink_swap) ... ok
+test_artifact_inventory_refuses_file_and_nested_directory_symlinks (test_dev_contract.ServiceTruthfulnessTests.test_artifact_inventory_refuses_file_and_nested_directory_symlinks) ... ok
+test_artifact_inventory_refuses_non_regular_entry (test_dev_contract.ServiceTruthfulnessTests.test_artifact_inventory_refuses_non_regular_entry) ... ok
+test_committed_matrix_is_quarantined_without_empirical_numbers_or_rows (test_dev_contract.ServiceTruthfulnessTests.test_committed_matrix_is_quarantined_without_empirical_numbers_or_rows) ... ok
+test_evaluation_quarantine_has_constant_git_work_for_many_rows (test_dev_contract.ServiceTruthfulnessTests.test_evaluation_quarantine_has_constant_git_work_for_many_rows) ... ok
+test_evaluation_refuses_intermediate_directory_symlink (test_dev_contract.ServiceTruthfulnessTests.test_evaluation_refuses_intermediate_directory_symlink) ... ok
+test_invalid_present_evaluation_file_fails_closed (test_dev_contract.ServiceTruthfulnessTests.test_invalid_present_evaluation_file_fails_closed) ... ok
+test_original_patterns_are_deterministic_and_bounded (test_dev_contract.ServiceTruthfulnessTests.test_original_patterns_are_deterministic_and_bounded) ... ok
+test_oversized_evaluation_is_refused_before_git_work (test_dev_contract.ServiceTruthfulnessTests.test_oversized_evaluation_is_refused_before_git_work) ... ok
+test_webhook_ledger_directory_fsync_failure_reconciles_on_restart (test_dev_contract.ServiceTruthfulnessTests.test_webhook_ledger_directory_fsync_failure_reconciles_on_restart) ... ok
+test_webhook_ledger_fails_closed_at_retention_bound (test_dev_contract.ServiceTruthfulnessTests.test_webhook_ledger_fails_closed_at_retention_bound) ... ok
+test_webhook_ledger_is_idempotent_and_does_not_store_raw_event_id (test_dev_contract.ServiceTruthfulnessTests.test_webhook_ledger_is_idempotent_and_does_not_store_raw_event_id) ... ok
+test_webhook_ledger_refuses_partial_and_non_exact_snapshots (test_dev_contract.ServiceTruthfulnessTests.test_webhook_ledger_refuses_partial_and_non_exact_snapshots) ... ok
+test_webhook_ledger_refuses_same_id_with_different_payload_identity (test_dev_contract.ServiceTruthfulnessTests.test_webhook_ledger_refuses_same_id_with_different_payload_identity) ... ok
+test_webhook_ledger_write_and_file_fsync_failures_leave_no_partial_state (test_dev_contract.ServiceTruthfulnessTests.test_webhook_ledger_write_and_file_fsync_failures_leave_no_partial_state) ... ok
+test_webhook_readiness_explicitly_disclaims_provider_verification (test_dev_contract.ServiceTruthfulnessTests.test_webhook_readiness_explicitly_disclaims_provider_verification) ... ok
+test_webhook_schema_refuses_non_sandbox_events (test_dev_contract.ServiceTruthfulnessTests.test_webhook_schema_refuses_non_sandbox_events) ... ok
+test_well_formed_but_uncommitted_evaluation_is_refused (test_dev_contract.ServiceTruthfulnessTests.test_well_formed_but_uncommitted_evaluation_is_refused) ... ok
+test_service_environment_is_allowlisted_and_drops_inherited_secrets (test_dev_contract.SpawnEnvironmentTests.test_service_environment_is_allowlisted_and_drops_inherited_secrets) ... ok
+test_configured_webhook_token_accepts_bounded_printable_ascii (test_dev_contract.WebhookConfigurationTests.test_configured_webhook_token_accepts_bounded_printable_ascii) ... ok
+test_configured_webhook_token_rejects_non_printable_or_unbounded_values (test_dev_contract.WebhookConfigurationTests.test_configured_webhook_token_rejects_non_printable_or_unbounded_values) ... ok
+
+----------------------------------------------------------------------
+Ran 97 tests in 2.371s
+
+OK
+Building for debugging...
+[Computing dependencies]
+[Pre-planning 1 / 327]
+[Planning deferred tasks]
+[20 / 60] CaptureDomain
+[27 / 89] CameraDomain
+[37 / 79] AnalysisDomain
+[44 / 68] UIDomain
+[51 / 62] FoundationPropertyTests-product
+[59 / 137]
+[60 / 137]
+[62 / 137]
+[66 / 137]
+[70 / 137]
+[71 / 137]
+[72 / 137]
+[73 / 137]
+[74 / 137]
+[78 / 137]
+[79 / 137]
+[81 / 137]
+[82 / 137]
+[83 / 137]
+[85 / 137]
+[86 / 137]
+[90 / 137]
+[92 / 137]
+[93 / 137]
+[95 / 137]
+[96 / 137]
+[105 / 137]
+[107 / 137]
+[108 / 137]
+[110 / 137]
+[112 / 137]
+[113 / 137]
+[115 / 137]
+[116 / 137]
+[126 / 137] FoundationPropertyTests-product
+[131 / 137] FoundationPropertyTests-product
+[133 / 137] FoundationPropertyTests-product
+[135 / 137] FoundationPropertyTests-product
+Build complete! (30.54 sec)
+[1/52] Testing FoundationPropertyTests.CaptureDomainPropertyTests/testUnitIntervalRefusesNaNAndInfinityExactly
+[2/52] Testing FoundationPropertyTests.CaptureDomainPropertyTests/testStableIdentifiersRejectEveryInvalidBoundaryExactly
+[3/52] Testing FoundationPropertyTests.CaptureDomainPropertyTests/testSafeValidationMessagesNeverEchoRejectedCallerText
+[4/52] Testing FoundationPropertyTests.CaptureDomainPropertyTests/testOperationalEventsRefuseNonPositiveCounts_1_024DistinctCounts
+[5/52] Testing FoundationPropertyTests.CameraAdmissionPropertyTests/testSessionIdentityComponentsCannotCollideThroughDelimiterAmbiguity
+[6/52] Testing FoundationPropertyTests.CameraAdmissionPropertyTests/testRecordedFramesConsumeCapacityBeforeDiagnostics_32_768DistinctCases
+[7/52] Testing FoundationPropertyTests.CaptureDomainPropertyTests/testIssuedArtifactIdentitiesAreNamespacedAndDistinct
+[8/52] Testing FoundationPropertyTests.CaptureDomainPropertyTests/testArtifactIdentityIsStructuralAndAcceptsIndependentMaximumComponents
+[9/52] Testing FoundationPropertyTests.CameraAdmissionPropertyTests/testLiveFrameWindowRefusesEveryProvenanceAndOrderingViolation
+[10/52] Testing FoundationPropertyTests.CameraAdmissionPropertyTests/testFrameWindowRefusesEmptyAndOversizedCollectionsExactly
+[11/52] Testing FoundationPropertyTests.CameraAdmissionPropertyTests/testFrameIssuerRefusesTimestampReplayAndSequenceOverflow
+[12/52] Testing FoundationPropertyTests.CameraAdmissionPropertyTests/testAdmissionArithmeticHandlesIntegerExtremesWithoutOverflow
+[13/52] Testing FoundationPropertyTests.CameraAdmissionPropertyTests/testCaptureLoadRefusesNegativeCounts_3_072DistinctCases
+[14/52] Testing FoundationPropertyTests.CameraAdmissionPropertyTests/testAdapterIdentitySeparatesReusedSessionReferences_1_024DistinctIssuers
+[15/52] Testing FoundationPropertyTests.CaptureDomainPropertyTests/testUnitIntervalRefusesOutOfRangeFiniteValues_2_048DistinctCases
+[16/52] Testing FoundationPropertyTests.CorrectionConfidencePropertyTests/testEveryNumericAndEvidenceRefusalIsExact
+[17/52] Testing FoundationPropertyTests.CorrectionConfidencePropertyTests/testAssessmentRefusesInsufficientZeroBaselineLowImprovementAndAmbiguity
+[18/52] Testing FoundationPropertyTests.CorrectionConfidencePropertyTests/testLiveEvidenceRequiresOneMeasurementPerIssuedFrame_479DistinctCounts
+[19/52] Testing FoundationPropertyTests.DetailPreservationPropertyTests/testDegenerateSafetyLimitsAlwaysRefuseConstructionExactly
+[20/52] Testing FoundationPropertyTests.CorrectionConfidencePropertyTests/testStableMeasuredImprovementIssuesVerifiedCorrectionAndFreeProof
+[21/52] Testing FoundationPropertyTests.CorrectionConfidencePropertyTests/testSessionSourceAlgorithmAndChronologyMismatchesRefuseExactly
+[22/52] Testing FoundationPropertyTests.CorrectionConfidencePropertyTests/testFreeProofIssuerRefusesNonVerifiedConfidence_6DistinctCases
+[23/52] Testing FoundationPropertyTests.CorrectionConfidencePropertyTests/testUnlockedUsersNeverSeePaywallEvenWithoutProof
+[24/52] Testing FoundationPropertyTests.CorrectionConfidencePropertyTests/testUnsupportedConditionsNeverBecomePositive_5DistinctReasons
+[25/52] Testing FoundationPropertyTests.CorrectionConfidencePropertyTests/testUnstableConditionsNeverBecomeVerified_1_024DistinctMeasurementPairs
+[26/52] Testing FoundationPropertyTests.DetailPreservationPropertyTests/testMissingMetricsAndEveryExceededLimitRefuseExactly
+[27/52] Testing FoundationPropertyTests.DetailPreservationPropertyTests/testSuppressionAppliesExactlyWhenEveryBoundPasses_6_561DistinctCases
+[28/52] Testing FoundationPropertyTests.EvaluationEvidencePropertyTests/testBoundedMillisecondMeasurementsRefuseHugeFiniteValues_4_096DistinctCases
+[29/52] Testing FoundationPropertyTests.EvaluationEvidencePropertyTests/testClaimIssuerRefusesNonPositiveSampleCounts_1_024DistinctCounts
+[30/52] Testing FoundationPropertyTests.EvaluationEvidencePropertyTests/testEveryTypedMetricRequiresCompleteFourAxisContext_6DistinctMetrics
+[31/52] Testing FoundationPropertyTests.EvaluationEvidencePropertyTests/testFramesPerThousandRefusesOutOfRangeValues_2_048DistinctCases
+[32/52] Testing FoundationPropertyTests.EvaluationEvidencePropertyTests/testIssuedPerformanceClaimRetainsCompleteContextAndManifestProvenance
+[33/52] Testing FoundationPropertyTests.PurchaseAndExportPropertyTests/testFullResolutionRequiresVerifiedEntitlementWhileProofRemainsFree
+[34/52] Testing FoundationPropertyTests.PurchaseAndExportPropertyTests/testProviderAdapterRefusesUnknownEntitlements_1_024DistinctIdentifiers
+[35/52] Testing FoundationPropertyTests.PurchaseAndExportPropertyTests/testPurchaseCancellationAndFailurePreserveFreeCamera_12DistinctStateTransitions
+[36/52] Testing FoundationPropertyTests.PurchaseAndExportPropertyTests/testPurchaseAttributeBoundaryUsesOnlyClosedScalarValues_3DistinctStatuses
+[37/52] Testing FoundationPropertyTests.PurchaseAndExportPropertyTests/testPurchasedAndRestoredOutcomesRequireAndPreserveVerifiedProviderToken
+[38/52] Testing FoundationPropertyTests.EvaluationEvidencePropertyTests/testLabelsRefuseEmptyOversizedControlAndNoncharacterBoundariesExactly
+[39/52] Testing FoundationPropertyTests.PurchaseAndExportPropertyTests/testAdvancedExportRequiresEntitlementAndSameArtifactSuppressionProof
+[40/52] Testing FoundationPropertyTests.EvaluationEvidencePropertyTests/testManifestIssuerRefusesEveryMalformedDigestExactly
+[41/52] Testing FoundationPropertyTests.EvaluationEvidencePropertyTests/testMarkOnlyCompatibilityLabelsRefuse_1_027DistinctLabels
+[42/52] Testing FoundationPropertyTests.EvaluationEvidencePropertyTests/testUnicodeCompatibilityLabelsRefuseUnsafeForms_1_024DistinctLabels
+[43/52] Testing FoundationPropertyTests.RuntimeConfigurationPropertyTests/testConfigurationErrorsNeverEchoCallerControlledText
+[44/52] Testing FoundationPropertyTests.RuntimeConfigurationPropertyTests/testConfigurationTypesAreSendable
+[45/52] Testing FoundationPropertyTests.RuntimeConfigurationPropertyTests/testEveryMissingInvalidAndUnexpectedServicePortRefusesExactly
+[46/52] Testing FoundationPropertyTests.RuntimeConfigurationPropertyTests/testCanonicalEnvironmentAcceptsAllInsertionOrders_720DistinctPermutations
+[47/52] Testing FoundationPropertyTests.RuntimeConfigurationPropertyTests/testHostNamespaceAndUnknownPortKeysFailClosedExactly
+[48/52] Testing FoundationPropertyTests.RuntimeConfigurationPropertyTests/testEveryServiceRefusesOutOfBlockPorts_1_024DistinctConfigurations
+[49/52] Testing FoundationPropertyTests.RuntimeConfigurationPropertyTests/testTCPPortAndPortBlockNumericBoundariesRefuseExactly
+[50/52] Testing FoundationPropertyTests.RuntimeConfigurationPropertyTests/testServiceIdentitiesAreTypedUniqueAndRepositoryScoped
+[51/52] Testing FoundationPropertyTests.RuntimeConfigurationPropertyTests/testParserRefusesEveryDeclaredBoundaryWithExactErrors
+[52/52] Testing FoundationPropertyTests.RuntimeConfigurationPropertyTests/testPortsEnvironmentFileSyntaxParsesInlineComments
+◇ Test run started.
+↳ Testing Library Version: 2074
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.
+test:ok scope=deterministic-domain-and-repository-contract
+workspace-init:ok writable_scope=.dev cache=npm,playwright tmp=repository-local
+dev:preflight ok: .dev/ is isolated and ports 4220-4229 have no foreign listeners
+  evaluation: 127.0.0.1:4220
+  revenuecat-webhook: 127.0.0.1:4221
+  test-patterns: 127.0.0.1:4222
+  artifacts: 127.0.0.1:4223
+dev:up ok: every allocated service returned its owned readiness document
+  evaluation: pid 81964, http://127.0.0.1:4220
+  revenuecat-webhook: pid 81975, http://127.0.0.1:4221
+  test-patterns: pid 81979, http://127.0.0.1:4222
+  artifacts: pid 81986, http://127.0.0.1:4223
+dev:health ok: all services are ready (TCP acceptance alone was not used)
+  evaluation: ready
+  revenuecat-webhook: ready
+  test-patterns: ready
+  artifacts: ready
+integration-probe:ok
+  ready:evaluation:4220
+  ready:revenuecat-webhook:4221
+  ready:test-patterns:4222
+  ready:artifacts:4223
+  evaluation:not_yet_available:cells=0
+  pattern:moire:original-svg
+  refusal:flicker-frequency:400
+  artifacts:observed:count=0
+  refusal:webhook-auth-unconfigured:503
+workspace-init:ok writable_scope=.dev cache=npm,playwright tmp=repository-local
+node-install:ok dependency-tree=valid local-playwright=present
+Downloading Chrome for Testing 151.0.7922.34 (playwright chromium v1234)[2m from https://cdn.playwright.dev/builds/cft/151.0.7922.34/mac-arm64/chrome-mac-arm64.zip[22m
+|                                                                                |   0% of 178.7 MiB
+|■■■■■■■■                                                                        |  10% of 178.7 MiB
+|■■■■■■■■■■■■■■■■                                                                |  20% of 178.7 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■                                                        |  30% of 178.7 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                                |  40% of 178.7 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                        |  50% of 178.7 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                |  60% of 178.7 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                        |  70% of 178.7 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                |  80% of 178.7 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■        |  90% of 178.7 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■| 100% of 178.7 MiB
+Chrome for Testing 151.0.7922.34 (playwright chromium v1234) downloaded to /Users/m3-max/Documents/GitHub/revenuecat-shipaton-2026/.dev/tmp/clean-e1e420727b12-bc5b6619300343e0/revenuecat-shipaton-2026/.dev/cache/ms-playwright/chromium-1234
+Downloading FFmpeg (playwright ffmpeg v1011)[2m from https://cdn.playwright.dev/dbazure/download/playwright/builds/ffmpeg/1011/ffmpeg-mac-arm64.zip[22m
+|                                                                                |   0% of 1 MiB
+|■■■■■■■■                                                                        |  10% of 1 MiB
+|■■■■■■■■■■■■■■■■                                                                |  20% of 1 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■                                                        |  31% of 1 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                                |  41% of 1 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                        |  50% of 1 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                |  61% of 1 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                        |  70% of 1 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                |  80% of 1 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■        |  90% of 1 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■| 100% of 1 MiB
+FFmpeg (playwright ffmpeg v1011) downloaded to /Users/m3-max/Documents/GitHub/revenuecat-shipaton-2026/.dev/tmp/clean-e1e420727b12-bc5b6619300343e0/revenuecat-shipaton-2026/.dev/cache/ms-playwright/ffmpeg-1011
+Downloading Chrome Headless Shell 151.0.7922.34 (playwright chromium-headless-shell v1234)[2m from https://cdn.playwright.dev/builds/cft/151.0.7922.34/mac-arm64/chrome-headless-shell-mac-arm64.zip[22m
+|                                                                                |   0% of 94.7 MiB
+|■■■■■■■■                                                                        |  10% of 94.7 MiB
+|■■■■■■■■■■■■■■■■                                                                |  20% of 94.7 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■                                                        |  30% of 94.7 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                                |  40% of 94.7 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                        |  50% of 94.7 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                |  60% of 94.7 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                        |  70% of 94.7 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                |  80% of 94.7 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■        |  90% of 94.7 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■| 100% of 94.7 MiB
+Chrome Headless Shell 151.0.7922.34 (playwright chromium-headless-shell v1234) downloaded to /Users/m3-max/Documents/GitHub/revenuecat-shipaton-2026/.dev/tmp/clean-e1e420727b12-bc5b6619300343e0/revenuecat-shipaton-2026/.dev/cache/ms-playwright/chromium_headless_shell-1234
+dev:preflight ok: .dev/ is isolated and ports 4220-4229 have no foreign listeners
+  evaluation: 127.0.0.1:4220
+  revenuecat-webhook: 127.0.0.1:4221
+  test-patterns: 127.0.0.1:4222
+  artifacts: 127.0.0.1:4223
+
+> revenuecat-shipaton-2026-development-harness@0.0.0 test:e2e
+> playwright test --reporter=line
+
+
+Running 5 tests using 1 worker
+
+[1/5] Tests/e2e/test-patterns.spec.ts:4:7 › original test-pattern development surface › readiness is semantic and explicitly non-production
+[2/5] Tests/e2e/test-patterns.spec.ts:29:7 › original test-pattern development surface › Playwright lifecycle owns and verifies the complete service block
+[3/5] Tests/e2e/test-patterns.spec.ts:56:7 › original test-pattern development surface › index exposes only original patterns and calibration limitations
+[4/5] Tests/e2e/test-patterns.spec.ts:67:7 › original test-pattern development surface › flicker surface states requested timing is not calibrated
+[5/5] Tests/e2e/test-patterns.spec.ts:73:7 › original test-pattern development surface › out-of-range timing is refused with a stable error
+  5 passed (8.1s)
+workspace-init:ok writable_scope=.dev cache=npm,playwright tmp=repository-local
+Building for debugging...
+[Computing dependencies]
+[1 / 4] AnalysisDomain
+Build complete! (1.28 sec)
+Test Suite 'Selected tests' started at 2026-08-10 13:17:09.293.
+Test Suite 'FoundationPropertyTests.xctest' started at 2026-08-10 13:17:09.295.
+Test Suite 'EvaluationEvidencePropertyTests' started at 2026-08-10 13:17:09.295.
+Test Case '-[FoundationPropertyTests.EvaluationEvidencePropertyTests testBoundedMillisecondMeasurementsRefuseHugeFiniteValues_4_096DistinctCases]' started.
+Test Case '-[FoundationPropertyTests.EvaluationEvidencePropertyTests testBoundedMillisecondMeasurementsRefuseHugeFiniteValues_4_096DistinctCases]' passed (0.032 seconds).
+Test Case '-[FoundationPropertyTests.EvaluationEvidencePropertyTests testClaimIssuerRefusesNonPositiveSampleCounts_1_024DistinctCounts]' started.
+Test Case '-[FoundationPropertyTests.EvaluationEvidencePropertyTests testClaimIssuerRefusesNonPositiveSampleCounts_1_024DistinctCounts]' passed (0.005 seconds).
+Test Case '-[FoundationPropertyTests.EvaluationEvidencePropertyTests testEveryTypedMetricRequiresCompleteFourAxisContext_6DistinctMetrics]' started.
+Test Case '-[FoundationPropertyTests.EvaluationEvidencePropertyTests testEveryTypedMetricRequiresCompleteFourAxisContext_6DistinctMetrics]' passed (0.001 seconds).
+Test Case '-[FoundationPropertyTests.EvaluationEvidencePropertyTests testFramesPerThousandRefusesOutOfRangeValues_2_048DistinctCases]' started.
+Test Case '-[FoundationPropertyTests.EvaluationEvidencePropertyTests testFramesPerThousandRefusesOutOfRangeValues_2_048DistinctCases]' passed (0.009 seconds).
+Test Case '-[FoundationPropertyTests.EvaluationEvidencePropertyTests testIssuedPerformanceClaimRetainsCompleteContextAndManifestProvenance]' started.
+Test Case '-[FoundationPropertyTests.EvaluationEvidencePropertyTests testIssuedPerformanceClaimRetainsCompleteContextAndManifestProvenance]' passed (0.000 seconds).
+Test Case '-[FoundationPropertyTests.EvaluationEvidencePropertyTests testLabelsRefuseEmptyOversizedControlAndNoncharacterBoundariesExactly]' started.
+Test Case '-[FoundationPropertyTests.EvaluationEvidencePropertyTests testLabelsRefuseEmptyOversizedControlAndNoncharacterBoundariesExactly]' passed (0.000 seconds).
+Test Case '-[FoundationPropertyTests.EvaluationEvidencePropertyTests testManifestIssuerRefusesEveryMalformedDigestExactly]' started.
+Test Case '-[FoundationPropertyTests.EvaluationEvidencePropertyTests testManifestIssuerRefusesEveryMalformedDigestExactly]' passed (0.000 seconds).
+Test Case '-[FoundationPropertyTests.EvaluationEvidencePropertyTests testMarkOnlyCompatibilityLabelsRefuse_1_027DistinctLabels]' started.
+Test Case '-[FoundationPropertyTests.EvaluationEvidencePropertyTests testMarkOnlyCompatibilityLabelsRefuse_1_027DistinctLabels]' passed (0.155 seconds).
+Test Case '-[FoundationPropertyTests.EvaluationEvidencePropertyTests testUnicodeCompatibilityLabelsRefuseUnsafeForms_1_024DistinctLabels]' started.
+Test Case '-[FoundationPropertyTests.EvaluationEvidencePropertyTests testUnicodeCompatibilityLabelsRefuseUnsafeForms_1_024DistinctLabels]' passed (0.191 seconds).
+Test Suite 'EvaluationEvidencePropertyTests' passed at 2026-08-10 13:17:09.690.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.393 (0.395) seconds
+Test Suite 'FoundationPropertyTests.xctest' passed at 2026-08-10 13:17:09.690.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.393 (0.395) seconds
+Test Suite 'Selected tests' passed at 2026-08-10 13:17:09.690.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.393 (0.397) seconds
+eval:ok scope=typed-compatibility-evidence-policy (no physical results claimed)
+workspace-init:ok writable_scope=.dev cache=npm,playwright tmp=repository-local
+node-install:ok dependency-tree=valid local-playwright=present
+found 0 vulnerabilities
+dependency-audit:ok npm=audited swift-graph=resolved
+workspace-init:ok writable_scope=.dev cache=npm,playwright tmp=repository-local
+node-install:ok dependency-tree=valid local-playwright=present
+sbom:ok path=.dev/artifacts/development-sbom.cdx.json scope=development-harness
+dev:down ok: only authenticated repository-owned services self-stopped
+repository-state:compare:ok tracked-content=stable index=stable untracked-content=stable ignored-before=none ignored-after=locked-node-install:193,python-bytecode:14,repository-local-dev-state:983,swift-build:2856
+verify-all:ok dependency-install=lock-derived tracked-content=stable index=stable untracked-content=stable ignored-artifacts=allowlisted services=ownership-stopped
+exit_code=0
