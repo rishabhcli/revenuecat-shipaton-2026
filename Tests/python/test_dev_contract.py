@@ -1798,10 +1798,12 @@ class LifecycleDeadlineTests(RepositoryLocalTempCase):
             cancelled: object | None = None,
             deadline: devctl.OperationDeadline | None = None,
             trace: devctl.LifecycleTrace | None = None,
+            spawned: devctl.SpawnedService | None = None,
         ) -> None:
             self.assertIs(cancelled, stop_event)
             self.assertIsNotNone(deadline)
             self.assertIsNotNone(trace)
+            self.assertIsNotNone(spawned)
 
         def bounded_stop(
             _root: Path,
@@ -1881,10 +1883,12 @@ class E2EStartupDeadlineTests(RepositoryLocalTempCase):
             cancelled: object | None = None,
             deadline: devctl.OperationDeadline | None = None,
             trace: devctl.LifecycleTrace | None = None,
+            spawned: devctl.SpawnedService | None = None,
         ) -> None:
             self.assertIsNotNone(cancelled)
             self.assertIsNotNone(deadline)
             self.assertIsNotNone(trace)
+            self.assertIsNotNone(spawned)
             observed_budgets.append(timeout_seconds)
             clock[0] += 6.0
 
@@ -2123,6 +2127,53 @@ class LifecycleDiagnosticsTests(RepositoryLocalTempCase):
             rendered,
         )
 
+    def test_an_exited_child_fails_by_cause_instead_of_spinning_on_a_zombie(self) -> None:
+        service = devctl.SERVICE_BY_NAME["evaluation"]
+        record = self.record(service, pid=5_601)
+        spawned = devctl.SpawnedService(
+            record=record,
+            process=SimpleNamespace(poll=lambda: 2),  # type: ignore[arg-type]
+        )
+        clock = FakeClock()
+        deadline = devctl.OperationDeadline(
+            expires_at=30.0, timeout_code="up_timeout", timeout_message="deadline exhausted"
+        )
+
+        with (
+            # A process that exited but was never reaped still answers signal 0.
+            mock.patch.object(devctl, "process_is_alive", return_value=True),
+            mock.patch.object(devctl, "process_matches_record", return_value=False),
+            mock.patch.object(devctl.time, "monotonic", side_effect=clock.monotonic),
+            mock.patch.object(devctl.time, "sleep", side_effect=clock.sleep),
+        ):
+            with self.assertRaises(devctl.DevContractError) as record_wait:
+                devctl.wait_for_record_health(
+                    record, 30.0, deadline=deadline, spawned=spawned
+                )
+            with self.assertRaises(devctl.DevContractError) as block_wait:
+                devctl.wait_for_health(
+                    self.root,
+                    self.configuration(),
+                    30.0,
+                    deadline=deadline,
+                    children={service.name: spawned},
+                )
+
+        for raised in (record_wait, block_wait):
+            self.assertEqual(raised.exception.code, "service_exited")
+            self.assertIn("exited with status 2", str(raised.exception))
+            self.assertIn(record.log_file, str(raised.exception))
+        self.assertEqual(clock.value, 0.0)
+
+    def test_a_running_child_never_short_circuits_the_readiness_wait(self) -> None:
+        service = devctl.SERVICE_BY_NAME["evaluation"]
+        spawned = devctl.SpawnedService(
+            record=self.record(service, pid=5_602),
+            process=SimpleNamespace(poll=lambda: None),  # type: ignore[arg-type]
+        )
+        self.assertIsNone(devctl._refuse_exited_child(spawned))
+        self.assertIsNone(devctl._refuse_exited_child(None))
+
     def test_diagnostics_report_their_own_failure_instead_of_masking_it(self) -> None:
         def unavailable(_root: Path, _trace: devctl.LifecycleTrace) -> list[str]:
             raise devctl.DevContractError("diagnostic_timeout", "inspection exceeded its budget")
@@ -2172,7 +2223,7 @@ class LoopbackBindContractTests(RepositoryLocalTempCase):
             dev_service.SERVICE_SPECS["evaluation"],
             self.root,
             dev_service.BIND_HOST,
-            4229,
+            4226,
             "d" * 32,
         )
         with mock.patch(
@@ -2180,16 +2231,60 @@ class LoopbackBindContractTests(RepositoryLocalTempCase):
             side_effect=AssertionError("bind must not resolve names"),
         ):
             server = dev_service.BoundedThreadingHTTPServer(
-                (dev_service.BIND_HOST, 4229), dev_service.RequestHandler, state
+                (dev_service.BIND_HOST, 4226), dev_service.RequestHandler, state
             )
         try:
             self.assertEqual(server.server_name, dev_service.BIND_HOST)
-            self.assertEqual(server.server_port, 4229)
+            self.assertEqual(server.server_port, 4226)
             # listen() ran, so a controller probe reaches a real listener.
-            with socket.create_connection((dev_service.BIND_HOST, 4229), timeout=2.0):
+            with socket.create_connection((dev_service.BIND_HOST, 4226), timeout=2.0):
                 pass
         finally:
             server.server_close()
+
+    def listening_socket(self, *, reuse_address: bool, port: int = 4226) -> socket.socket:
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        if reuse_address:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.addCleanup(listener.close)
+        listener.bind((dev_service.BIND_HOST, port))
+        listener.listen(5)
+        return listener
+
+    def test_address_reuse_never_admits_a_second_live_listener(self) -> None:
+        self.assertTrue(dev_service.BoundedThreadingHTTPServer.allow_reuse_address)
+        self.assertFalse(dev_service.BoundedThreadingHTTPServer.allow_reuse_port)
+        self.listening_socket(reuse_address=True)
+        with self.assertRaises(OSError) as raised:
+            self.listening_socket(reuse_address=True)
+        self.assertEqual(raised.exception.errno, errno.EADDRINUSE)
+
+    def test_a_correctly_stopped_service_can_restart_on_the_same_port(self) -> None:
+        state = dev_service.ServiceState(
+            dev_service.SERVICE_SPECS["evaluation"],
+            self.root,
+            dev_service.BIND_HOST,
+            4226,
+            "e" * 32,
+        )
+        server = dev_service.BoundedThreadingHTTPServer(
+            (dev_service.BIND_HOST, 4226), dev_service.RequestHandler, state
+        )
+        client = socket.create_connection((dev_service.BIND_HOST, 4226), timeout=2.0)
+        accepted, _address = server.socket.accept()
+        # The service closes first, exactly as it does for `Connection: close`,
+        # so the loopback address is left in TIME_WAIT on the service side.
+        accepted.close()
+        client.close()
+        server.server_close()
+
+        restarted = dev_service.BoundedThreadingHTTPServer(
+            (dev_service.BIND_HOST, 4226), dev_service.RequestHandler, state
+        )
+        try:
+            self.assertEqual(restarted.server_port, 4226)
+        finally:
+            restarted.server_close()
 
     def test_service_logs_the_bind_phase_before_it_can_stall(self) -> None:
         source = (REPO_ROOT / "scripts" / "dev_service.py").read_text(encoding="utf-8")

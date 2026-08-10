@@ -1007,6 +1007,27 @@ def readiness_probe(
     return True, "ready"
 
 
+def _refuse_exited_child(spawned: SpawnedService | None) -> None:
+    """Fail immediately, and by cause, when a retained child has already exited.
+
+    A child that died during startup leaves an unreaped process whose PID still
+    answers signal 0, so a liveness-only wait would spin on a zombie until the
+    deadline and then report an ownership failure instead of the real cause.
+    """
+
+    if spawned is None:
+        return
+    status = spawned.process.poll()
+    if status is None:
+        return
+    record = spawned.record
+    raise DevContractError(
+        "service_exited",
+        f"{record.service} exited with status {status} before it became ready; "
+        f"its cause is recorded in {record.log_file}",
+    )
+
+
 def wait_for_record_health(
     record: PidRecord,
     timeout_seconds: float,
@@ -1014,6 +1035,7 @@ def wait_for_record_health(
     cancelled: Any | None = None,
     deadline: OperationDeadline | None = None,
     trace: LifecycleTrace | None = None,
+    spawned: SpawnedService | None = None,
 ) -> None:
     if deadline is None:
         deadline = _deadline_after(
@@ -1027,6 +1049,7 @@ def wait_for_record_health(
     detail = "not checked"
     while True:
         deadline.check()
+        _refuse_exited_child(spawned)
         if not process_is_alive(record.pid):
             deadline.check()
             detail = "process exited"
@@ -1051,6 +1074,7 @@ def wait_for_health(
     require_every_record: bool = True,
     deadline: OperationDeadline | None = None,
     trace: LifecycleTrace | None = None,
+    children: Mapping[str, SpawnedService] | None = None,
 ) -> dict[str, str]:
     if deadline is None:
         deadline = _deadline_after(
@@ -1072,6 +1096,7 @@ def wait_for_health(
             if service.name not in pending:
                 continue
             deadline.check()
+            _refuse_exited_child(None if children is None else children.get(service.name))
             try:
                 record = read_pid_record(root, service.name)
             except DevContractError as error:
@@ -1499,7 +1524,12 @@ def command_up(
                     deadline.check()
             with trace.phase("readiness"):
                 wait_for_health(
-                    root, state.configuration, timeout_seconds, deadline=deadline, trace=trace
+                    root,
+                    state.configuration,
+                    timeout_seconds,
+                    deadline=deadline,
+                    trace=trace,
+                    children={spawned.record.service: spawned for spawned in started},
                 )
             deadline.check()
             records = []
@@ -1647,6 +1677,7 @@ def command_e2e_server(
                         cancelled=stop_requested,
                         deadline=startup_deadline,
                         trace=trace,
+                        spawned=spawned,
                     )
                     startup_deadline.check()
 

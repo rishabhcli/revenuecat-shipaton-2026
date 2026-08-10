@@ -263,3 +263,38 @@ This file is append-only. Each entry records delivered behavior, exact verificat
 ### Next item selected by `GOAL.md` section 10.1
 
 - Push this commit and read the exact SHA-pinned GitHub Actions run for it. If it is green, archive the regenerable clean/CI evidence and Tier 0 may exit. If it is red, the new `diagnostic:` block and archived service logs identify the failing phase and service directly; repair that specific cause without weakening the one-budget lifecycle contract and without any unchecked process termination.
+
+## 2026-08-10T20:30:00Z — Diagnosed and repaired the real CI startup failure
+
+### What the new diagnostics proved
+
+- GitHub Actions run [31427302701](https://github.com/rishabhcli/revenuecat-shipaton-2026/actions/runs/31427302701) for commit `94cdac1` moved the failure and named its cause. `dev:up` now completed on the `macos-26` runner in **1.28 seconds** (20:05:46.22 to 20:05:47.50) where the identical step previously exhausted its full 30-second budget. That is consistent with the removal of the `socket.getfqdn` call from `server_bind`, though the previous runs carry no phase evidence, so this is an observation about the new run and not a retrospective proof about the old one.
+- The run then failed later, inside `make test-e2e`, and the archived `diagnostic:` block stated the cause exactly: `diagnostic:log name=evaluation record={"error":"[Errno 48] Address already in use","event":"local_service_start_failed"}` at 20:07:07.995, eleven seconds after that service had answered `devctl_shutdown` with 202 at 20:06:56.486. The service line read `name=evaluation record=absent pid=none alive=unknown ownership=unknown listener=not-applicable child=exited(2) readiness="process ownership could not be proven"`.
+
+### Two real defects this identified
+
+1. **A correct shutdown produced a false "port already held" startup failure.** `BoundedThreadingHTTPServer` set `allow_reuse_address = False`. The controller's readiness and shutdown clients send `Connection: close`, so the service is the active closer and its own loopback address is left in TIME_WAIT. `verify-all` runs `test-integration` and then `test-e2e`, which restarts the same services on the same allocated ports inside that window, and the second bind was refused. It passed locally only because the interval between the two stages happened to be longer.
+2. **An exited child was waited on until the deadline instead of failing by cause.** A child that exits without being reaped still answers signal 0, so `wait_for_record_health` saw a live PID whose `ps` command line no longer matched and reported `process ownership could not be proven` for the full budget, hiding `exit status 2` behind a timeout.
+
+### Behavior delivered
+
+- `BoundedThreadingHTTPServer` now sets `allow_reuse_address = True` and explicitly keeps `allow_reuse_port = False`. This was verified empirically on this platform before it was adopted, not assumed: with `SO_REUSEADDR` set on both sockets, a second live listener on the identical loopback address is still refused with `EADDRINUSE`, while a rebind over the service's own TIME_WAIT residue succeeds; without it that rebind is refused. Port ownership therefore still fails closed, and it remains additionally guarded by `dev:preflight` listener refusal, PID-record ownership proof, and the instance-token digest in every readiness response.
+- `_refuse_exited_child` makes `wait_for_health` and `wait_for_record_health` raise the stable code `service_exited` immediately when a retained child has exited, naming the exit status and the log file that records the cause. `command_up` passes the children it spawned and `command_e2e_server` passes the child it is waiting on.
+
+### Commands run and evidence
+
+- `make test-python` passed 97/97 (up from 93) and `make test-tools` passed 31/31. New tests: address reuse never admits a second live listener and never enables `SO_REUSEPORT`; a service closed exactly as `Connection: close` closes it can restart on the same port; an exited child fails with `service_exited` naming status and log file without consuming any of the deadline, through both waiters; and a running or absent child never short-circuits a readiness wait.
+- The suite was run three times back to back, inside the TIME_WAIT window, to prove it is no longer order- or timing-dependent. The three socket-level bind tests were moved to reserved unallocated port 4226 so they cannot collide with the fixtures that deliberately model a non-reusing foreign listener on 4227-4229.
+- `make lint`, `make test-integration` immediately followed by `make test-e2e` (the exact sequence that failed on CI, five Playwright tests passing), and `make verify-all` all passed locally, with `tracked-content=stable index=stable untracked-content=stable ignored-artifacts=allowlisted services=ownership-stopped`.
+
+### What is now true that was not true before
+
+- The harness can restart an owned service on its allocated port immediately after a correct shutdown, and a service that cannot start reports its exit status and log location at once instead of after a 30-second timeout.
+
+### What is still not true
+
+- No clean-checkout CI pass is claimed yet. Tier 0 remains open and the repository remains not in production.
+
+### Next item selected by `GOAL.md` section 10.1
+
+- Push this repair and read the exact SHA-pinned GitHub Actions run. Only a green run for the exact committed revision, together with a `make verify-clean` pass for that same revision, allows Tier 0 to exit and its evidence to be archived.

@@ -1225,7 +1225,15 @@ def route_identifier(service_name: str, method: str, path: str) -> str:
 
 class BoundedThreadingHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
-    allow_reuse_address = False
+    # SO_REUSEADDR only relaxes the TIME_WAIT residue left by connections this
+    # service itself closed.  Without it a restart on the same allocated port
+    # fails with EADDRINUSE for the whole TIME_WAIT window, which is how a
+    # correct shutdown turns into a false "port already held" startup failure.
+    # It does not weaken port ownership: a second live listener on the identical
+    # loopback address is still refused with EADDRINUSE.  SO_REUSEPORT, which
+    # would permit exactly that, stays off.
+    allow_reuse_address = True
+    allow_reuse_port = False
 
     def __init__(self, address: tuple[str, int], handler: type[BaseHTTPRequestHandler], state: ServiceState):
         self.state = state
