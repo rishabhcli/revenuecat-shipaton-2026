@@ -130,3 +130,98 @@ This file is append-only. Each entry records delivered behavior, exact verificat
 ### Next item selected by GOAL.md section 10.1
 
 - Commit the measured lifecycle repair, rerun `make verify-clean` from the exact clean revision, restore the standing services, and archive evidence only if every canonical stage and cleanup exits zero; then push and verify the exact SHA-pinned workflow run.
+
+## 2026-08-10T15:29:05Z — Repository-wide progress audit and next-agent handoff
+
+### How to read this snapshot
+
+- This entry audits committed `main` at `ade5bbcb8c211dc57764781e9486e638c87e0423`. It does not replace the append-only history above; where an older entry says clean verification or CI was pending, the current evidence below supersedes that status.
+- Progress is reported by the `GOAL.md` ladder and release gates, not by an invented percentage. The end goal requires a signed app, real camera/provider/device evidence, production cutover, and continuously ratcheted verification; none of those may be inferred from portable package or loopback-harness success.
+- **Current classification: not in production; Tier 0 remains open.** The Tier 0 implementation is substantial and the exact commit passes the canonical contract from a local detached clean checkout, but the same commit's required GitHub Actions run is red.
+- Product name remains unassigned. Do not create one. No active external blocker is recorded in `BLOCKED.md`.
+
+### Evidence observed in this audit
+
+- `make dev:preflight && make dev:up && make dev:health` passed on the source checkout. The four identity-bound local services were ready on `127.0.0.1:4220-4223`; this is local harness evidence only.
+- `make verify-clean` passed against the exact clean source commit `ade5bbcb8c211dc57764781e9486e638c87e0423` in 58.42 seconds on the local Apple-silicon host. Its detached `make verify-all` run passed strict format/policy/type/build checks, 29 repository-tool tests, 84 local-service contract tests, 52 Swift XCTest methods, all-four-service integration, five Playwright tests, the typed evaluation-policy oracle, dependency audit, development SBOM generation, repository-state stability, and ownership-safe cleanup.
+- The 52 Swift methods include 21 named property attacks declaring 60,019 distinct cases. These counts describe the portable foundation tests; they are not physical camera, GPU, provider, accessibility, performance, or release evidence.
+- GitHub Actions run [31402791964](https://github.com/rishabhcli/revenuecat-shipaton-2026/actions/runs/31402791964) for the same commit failed. Bootstrap and locked dependency installation passed, then `dev:up` exhausted its single 30-second total deadline with stable code `up_timeout`; cleanup reported that three authenticated self-shutdown endpoints were unavailable and correctly sent no PID signals. The failure was truthful and fail-closed, but it means the clean CI requirement is not green.
+- The successful local clean artifact generated during this audit was not added to this documentation-only commit. Regenerate and commit release evidence only after the CI failure is repaired and the exact replacement commit passes both local clean verification and CI.
+
+### Progress against the ladder
+
+| Tier | State | What the repository proves now | What prevents exit |
+|---|---|---|---|
+| **0 — executable contract** | **In progress; current priority** | Strict Swift 6 package; pinned Node/Playwright graph; canonical Make commands; SHA-pinned CI; isolated four-service harness; policy, dependency, ADR, assumption, blocker, support, and evidence registers; detached clean verifier. Local clean `verify-all` passes. | Exact-commit GitHub Actions verification is red. No green CI URL or committed clean/CI evidence exists. |
+| **1 — domain invariants** | **Partial portable encodings only** | All eight invariants have typed policy foundations and property attacks listed below. | No real adapter boundary, component-failure injection, production alert, or runbook exists for any invariant; therefore Tier 1 has not exited. |
+| **2 — hard technical core** | **Not started** | Only policy/data contracts exist. | No AVFoundation capture, signal extraction, exposure search/lock, Accelerate/vDSP analysis, Metal detector/filter, recorder, RevenueCat adapter, or real export. The physical kill test has not run. |
+| **3 — adapters/trust boundaries** | **Local-harness subset only** | Loopback services have typed config, bounded requests, fail-closed readiness, structured logs, webhook idempotency, and an ADR threat model. | No Apple-framework, RevenueCat SDK, Photos, media-file, or device adapter exists; no provider contract fixture corpus exists. |
+| **4 — first vertical slice** | **Not started** | Original browser test patterns exercise only the development surface. | There is no signed app or end-to-end camera user outcome. Browser E2E is explicitly not app E2E. |
+| **5 — refusal/abstention** | **Domain-policy partial** | Closed refusal states exist for correction, moiré, export, configuration, evidence, and local services. | The designed visuals/copy and failure behavior have not been exercised in a SwiftUI app, on device, or through real providers. |
+| **6 — ownership-area build-out** | **Not started as production surfaces** | Each area has a portable domain module. | A module's existence is not area completion; every real Camera, Analysis, Metal, UI, Purchases, Export, and Evaluation surface is absent. |
+| **7 — verification lattice** | **Foundation subset** | Unit/property, local integration, browser E2E, policy/security, and dependency checks cover the current foundation. | No app/device/provider contract and E2E tests, physical evaluation, VoiceOver audit, frame/thermal profiling, mutation report, or release coverage exists. |
+| **8 — regenerable evaluation** | **Policy only** | Typed claims require four-axis context and immutable-manifest/run provenance; unreplayed dashboard data is quarantined. | `evidence/` contains only its README. There are no immutable frame manifests, correctness oracles, physical results, baselines, or publishable numbers. |
+| **9 — performance/resilience** | **Harness deadlines only** | Local service time/size/concurrency/log limits and cleanup paths are tested. | No capture frame, audio-sync, GPU, memory, thermal, bundle, or sustained-recording budget has been measured. |
+| **10 — security/privacy/supply chain** | **Foundation subset** | Internal-only Swift graph, dependency register, locked development graph, secret checks, loopback threat model, and development SBOM command exist. | No shipped-app threat model, privacy/runtime media audit, RevenueCat boundary review, iOS release SBOM, signing, or authorization matrix exists. |
+| **11 — operational readiness** | **Local harness only** | Semantic local readiness and bounded redacted logs exist. | No staging/production environment, SLO/dashboard/alert/runbook set, rollback drill, emergency disable, support surface, or applicable restore drill exists. |
+| **12 — production/real usage** | **Not started** | Nothing in the repository establishes production. | No TestFlight external tester, App Store submission, CI-built tagged deployment, production RevenueCat configuration, soak, real user, incident drill, dependency upgrade, or rollback exercise. |
+| **13 — submission** | **Concept and draft only** | The concept, award strategy, draft Devpost identifiers, form requirements, build order, and demo storyboard are documented. | No product name, app icon, screenshot, public two-minute device video, try-it-out/release URL, judge unlock, final claims/evidence audit, or final submission. |
+
+### Domain-invariant coverage and exact remaining boundary
+
+| Invariant | Portable encoding and tests already present | Missing production proof |
+|---|---|---|
+| **I1 — correction comes from live frames** | `CameraDomain/LiveFrameEvidence.swift` uses package-issued session/source/frame provenance; `AnalysisDomain/CorrectionAssessment.swift` issues verified correction only from chronological one-to-one live evidence. `CameraAdmissionPropertyTests` and `CorrectionConfidencePropertyTests` attack provenance, ordering, evidence count, session/source, algorithm, and numeric failures. | No AVFoundation adapter issues frames, no live luma/banding measurement exists, and no component-failure injection, runtime boundary assertion, alert, or runbook proves hardcoded demo values cannot enter. |
+| **I2 — unsupported/unstable is never green** | `SourceCondition`, `CorrectionConfidence`, and `UIDomain/CorrectionIndicator` make verified, caution, and refusal states distinct; property tests cover all declared unsupported reasons and unstable measurement pairs. | No SwiftUI rendering, actual camera-source classification, accessibility/device screenshot, loss-of-lock path, fault injection, alert, or runbook. |
+| **I3 — diagnostics drop before recorded frames** | `CaptureAdmissionPolicy` admits recorded frames first; arithmetic and 32,768-case priority attacks pass. | No capture callback, recorder queue, audio path, backpressure instrumentation, diagnostic cancellation, or dropped-frame device test. |
+| **I4 — moiré suppression preserves detail** | `DetailPreservationLimits`, package-issued measurements, `BoundedSuppression`, export artifact matching, and 6,561-case policy attacks refuse missing/exceeded metrics. | No tiled detector, FFT/notch Metal kernel, real-edge metric, calibrated threshold, GPU frame budget, or physical detail-preservation evidence. |
+| **I5 — no pixels in analytics/RevenueCat attributes** | `OperationalEvent` and `PurchaseAttributeSnapshot` are closed scalar-only types; package dependency/import policy keeps frame/provider types out of portable telemetry boundaries. | No real analytics or RevenueCat serialization adapter, compile-time app-boundary enforcement, runtime payload audit, or privacy test against captured buffers. |
+| **I6 — free proof before purchase** | `VerifiedFreeProof`, `PaywallPresentationPolicy`, and proof-preview export authorization require a verified correction before a locked user's paywall may present; tests cover unverified/unstable/refused paths. | No live preview/proof clip, UI navigation, RevenueCat offering, output-quality implementation, or on-device paywall ordering test. |
+| **I7 — purchase failure preserves free camera** | `EntitlementPolicy` has no unavailable free-camera state and preserves previous verified access through cancellation/failure; purchase/export state-transition tests pass. | No RevenueCat/StoreKit adapter, restore/offline/refund/expiry reconciliation, sandbox/device state matrix, or user-visible provider failure flow. |
+| **I8 — claims name device/lens/format/source** | `CompatibilityContext`, typed metric/unit pairs, immutable-manifest/run provenance, Unicode-bounded labels, and evaluation tests require all four axes; the local dashboard withholds unreplayed empirical rows. | No committed replay verifier, immutable evaluation corpus, device/source matrix row, physical result, publication pipeline, or support claim. |
+
+### Ownership-area handoff
+
+| Area | Keep/reuse | Build next; do not mistake the left column for completion |
+|---|---|---|
+| **Camera** | Issued session/source/frame identities, chronological windows, record-first admission policy. | Signed iOS target, permissions, `AVCaptureSession`, device/lens/format enumeration, manual exposure/ISO/focus/WB, bounded frame sampler, recorder and audio sync. |
+| **Analysis** | Normalized banding evidence, thresholds, refusal/confidence types, live-evidence assessment. | Linear-luma row extraction, detrending/windowing, vDSP frequency/phase estimation, 50/60/100/120/PWM families, candidate scoring, settling, hysteresis, uncertainty, and convergence instrumentation. |
+| **Metal** | Detail-preservation limits and authorization token. | Offline oracle first, then tiled spectral detector, conservative orientation-aware notch suppression, overlap-add, edge/text protection, temporal smoothing, and measured GPU budget. Do not start this before the temporal kill test succeeds. |
+| **UI** | Framework-neutral status shape/text and paywall-order policy. | SwiftUI camera-first experience, live split, sync action, scopes, permissions and all designed states; VoiceOver, non-color cues, reduced motion, Dynamic Type/reflow, focus, and contrast. |
+| **Purchases** | Canonical `pro_capture` entitlement policy and failure-preserving access state. | RevenueCat SDK adapter, remote offerings, anonymous identity, purchase/restore/offline/expiry/refund, sandbox fixtures, judge unlock, and provider observability without media attributes. |
+| **Export** | Privacy disposition and entitlement/detail-bound authorization. | `AVAssetWriter` or approved recorder integration, quality gate, Photos/share, settings metadata, cancellation/recovery, storage pressure, frame/audio/thermal accounting. |
+| **Evaluation** | Four-axis evidence schema, typed units, provenance issuer, original browser pattern generator, quarantine behavior. | Synthetic known-frequency rolling-shutter sequences, immutable manifests, deterministic oracle/baselines, committed replay verifier, physical device/source rig, held-out results, and support-matrix publication. |
+
+### Release-gate status
+
+| Gate | Status | Evidence required before green |
+|---|---|---|
+| **G1 banding reduction/convergence** | Red — no algorithm or physical measurement. | Regenerable per-device/lens/format/source results meeting declared thresholds. |
+| **G2 recording frame/audio/thermal budgets** | Red — no recorder. | Sustained device recordings with exact frame accounting, audio offset, thermal state, and declared envelope. |
+| **G3 moiré detail preservation** | Red — policy only. | Real filter output versus deterministic/physical edge and interference oracles within threshold. |
+| **G4 unsupported cases fail honestly** | Red — typed policy exists, app path absent. | App/device E2E for unsupported, unstable, low-light, uncalibrated, drift, and recovery states, never falsely green. |
+| **G5 RevenueCat/free-proof flow** | Red — provider absent. | Sandbox and device tests for offering, purchase, cancel, failure, restore, offline, expiry/refund, judge unlock, and free-camera continuity. |
+| **G6 privacy/accessibility/submission** | Red — foundation only. | Shipped-app privacy audit, accessibility matrix, icon/screenshot/video/source disclosures, support surface, and store or confirmed Next Gen path. |
+
+### Documentation and claim-drift notes
+
+- `HACKATHON.md` is the external-requirements dossier, `WINNING_IDEA.md` selects the concept, `README.md` defines the product contract, `AGENTS.md` defines implementation discipline, and `GOAL.md` defines work order. This journal is the current evidence/status source; do not copy its provisional status backward into external rules or product requirements.
+- `HACKATHON.md` still contains the originally captured unchecked item “Decide the project concept,” while `WINNING_IDEA.md` clearly records a selected concept. Treat this as checklist drift, not permission to revisit the concept or invent a product name.
+- The deadline/countdown and live Devpost/Next Gen facts in the dossier were captured on August 9. Re-verify external rules before submission decisions; do not silently update them from memory.
+- `SUPPORT_MATRIX.md` is truthfully empty. Do not add a row until physical, regenerable evidence names device, OS, lens, format, source, algorithm/calibration, metrics, command, manifest, seed, timestamp, and release commit.
+- `evidence/` has no product evidence beyond its policy README. Local logs under ignored `.dev/` are observations, not committed release evidence.
+
+### Risks, migration, rollback, and blockers
+
+- The immediate risk is environment-sensitive lifecycle behavior: local clean verification is green, but the identical commit times out starting services on the `macos-26` CI runner. Blindly raising deadlines would hide the failure mode; broad PID signalling remains prohibited.
+- The repository has no product persistence or user-media migration. The local webhook ledger is synthetic/test-only under ignored `.dev/`; it is not RevenueCat provider truth.
+- This handoff changes documentation only. Rollback is a revert of this single append-only journal commit; no runtime or data rollback is required.
+- No active external blocker is recorded. Hardware, signing, provider, and real-user needs become blockers only when they are the first physically impossible action and no safe parallel work exists.
+
+### Next item selected by `GOAL.md` section 10.1
+
+1. **Keep Tier 0 as the only current priority.** Reproduce and diagnose GitHub Actions run `31402791964` without weakening the one-budget lifecycle contract or introducing unchecked process termination. Preserve per-service startup and shutdown diagnostics on CI failure so the exact unavailable phase is observable.
+2. Add a regression that models the discovered CI startup failure, then make startup/readiness succeed within a measured explicit budget or document an evidence-based replacement budget of equal or greater safety. Do not multiply a timeout per service and do not report socket acceptance as readiness.
+3. Run the targeted lifecycle tests, `make test-integration`, `make test-e2e`, `make verify-clean`, and restore `make dev:health`. Commit regenerable clean evidence only for the replacement commit that passes.
+4. Push and require the exact replacement SHA's GitHub Actions verification to be green; record its run URL and artifact. Only then may Tier 0 exit.
+5. After Tier 0 is green, resume the lowest incomplete Tier 1 work, beginning with the I2 fail-closed live-correction boundary because preventing a false green protects the user from the highest-impact wrong result. Add its real boundary assertion, component-failure attack, structured operational event, production alert contract, and runbook before moving to the physical Tier 2 camera-control kill test.
