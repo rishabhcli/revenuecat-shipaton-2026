@@ -1797,9 +1797,11 @@ class LifecycleDeadlineTests(RepositoryLocalTempCase):
             *,
             cancelled: object | None = None,
             deadline: devctl.OperationDeadline | None = None,
+            trace: devctl.LifecycleTrace | None = None,
         ) -> None:
             self.assertIs(cancelled, stop_event)
             self.assertIsNotNone(deadline)
+            self.assertIsNotNone(trace)
 
         def bounded_stop(
             _root: Path,
@@ -1878,9 +1880,11 @@ class E2EStartupDeadlineTests(RepositoryLocalTempCase):
             *,
             cancelled: object | None = None,
             deadline: devctl.OperationDeadline | None = None,
+            trace: devctl.LifecycleTrace | None = None,
         ) -> None:
             self.assertIsNotNone(cancelled)
             self.assertIsNotNone(deadline)
+            self.assertIsNotNone(trace)
             observed_budgets.append(timeout_seconds)
             clock[0] += 6.0
 
@@ -1904,6 +1908,296 @@ class E2EStartupDeadlineTests(RepositoryLocalTempCase):
         )
         self.assertEqual(observed_budgets, [30.0, 24.0, 18.0, 12.0])
         self.assertEqual(stop_service.call_count, len(devctl.SERVICES))
+
+
+class LifecycleDiagnosticsTests(RepositoryLocalTempCase):
+    """A lifecycle failure must say which phase and which service caused it."""
+
+    def configuration(self) -> devctl.PortConfiguration:
+        return devctl.PortConfiguration(
+            {"PORT_0": 4220, "PORT_1": 4221, "PORT_2": 4222, "PORT_3": 4223}
+        )
+
+    def record(self, service: devctl.ServiceDefinition, pid: int = 5_101) -> devctl.PidRecord:
+        return devctl.PidRecord(
+            schema_version=1,
+            repository=devctl.REPOSITORY_NAME,
+            repo_root=str(self.root.resolve()),
+            pid=pid,
+            service=service.name,
+            host=devctl.BIND_HOST,
+            port=4220 + service.index,
+            instance_token=(str(service.index + 1) * 32),
+            script=str((self.root / "scripts" / "dev_service.py").resolve()),
+            log_file=str((self.root / ".dev" / "logs" / f"{service.name}.log").absolute()),
+            started_at="2026-08-10T00:00:00.000Z",
+        )
+
+    def write_record(self, record: devctl.PidRecord) -> None:
+        (self.root / ".dev" / "pids").mkdir(parents=True, exist_ok=True)
+        devctl.write_pid_record(self.root, record)
+
+    def write_log(self, service_name: str, text: str) -> Path:
+        directory = self.root / ".dev" / "logs"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{service_name}.log"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_up_timeout_names_the_consuming_phase_and_the_unspawned_services(self) -> None:
+        clock = FakeClock(100.0)
+        state = devctl.PreflightState(self.configuration(), {})
+
+        @contextmanager
+        def lock(_root: Path, *, deadline: devctl.OperationDeadline | None = None) -> Iterator[None]:
+            yield
+
+        def slow_preflight(
+            _root: Path, *, deadline: devctl.OperationDeadline | None = None
+        ) -> devctl.PreflightState:
+            clock.advance(10.0)
+            return state
+
+        def slow_spawn(
+            _root: Path, service: devctl.ServiceDefinition, _port: int
+        ) -> devctl.SpawnedService:
+            clock.advance(21.0)
+            return devctl.SpawnedService(
+                record=self.record(service),
+                process=SimpleNamespace(poll=lambda: None),  # type: ignore[arg-type]
+            )
+
+        with (
+            mock.patch.object(devctl, "controller_lock", side_effect=lock),
+            mock.patch.object(devctl, "preflight", side_effect=slow_preflight),
+            mock.patch.object(devctl, "read_pid_record", return_value=None),
+            mock.patch.object(devctl, "spawn_service", side_effect=slow_spawn),
+            mock.patch.object(devctl, "wait_for_health") as wait_for_health,
+            mock.patch.object(devctl, "stop_spawned_service"),
+            mock.patch.object(devctl.time, "monotonic", side_effect=clock.monotonic),
+        ):
+            trace = devctl.LifecycleTrace()
+            with self.assertRaises(devctl.DevContractError) as raised:
+                devctl.command_up(self.root, 30.0, trace)
+            phases = trace.phase_lines()
+
+        self.assertEqual(raised.exception.code, "up_timeout")
+        wait_for_health.assert_not_called()
+        self.assertIn(
+            "diagnostic:phase name=preflight started_s=0.000 elapsed_s=10.000 status=completed",
+            phases,
+        )
+        self.assertIn(
+            "diagnostic:phase name=spawn:evaluation started_s=10.000 "
+            "elapsed_s=21.000 status=failed",
+            phases,
+        )
+        self.assertNotIn("diagnostic:phase name=spawn:artifacts", "\n".join(phases))
+        self.assertIn(
+            "diagnostic:phase name=cleanup-started started_s=31.000 "
+            "elapsed_s=0.000 status=reached",
+            phases,
+        )
+
+        with (
+            mock.patch.object(devctl, "discover_listeners_for_ports", return_value={}),
+            mock.patch.object(devctl, "process_is_alive", return_value=False),
+        ):
+            rendered = "\n".join(devctl.lifecycle_diagnostics(self.root, trace))
+
+        self.assertIn(
+            "diagnostic:service name=artifacts record=absent pid=none "
+            "alive=unknown ownership=unknown listener=not-applicable child=not-retained",
+            rendered,
+        )
+        self.assertIn("diagnostic:log name=artifacts record=log file absent", rendered)
+        self.assertTrue(rendered.startswith("diagnostic:begin"))
+        self.assertTrue(rendered.endswith("diagnostic:end"))
+
+    def test_live_process_without_a_listener_is_distinguished_from_an_exited_one(self) -> None:
+        live = devctl.SERVICE_BY_NAME["evaluation"]
+        exited = devctl.SERVICE_BY_NAME["artifacts"]
+        self.write_record(self.record(live, pid=5_201))
+        self.write_record(self.record(exited, pid=5_202))
+        trace = devctl.LifecycleTrace()
+        trace.note_readiness(live.name, "readiness endpoint unavailable")
+        trace.note_readiness(exited.name, "process exited")
+
+        with (
+            mock.patch.object(devctl, "discover_listeners_for_ports", return_value={}),
+            mock.patch.object(devctl, "process_is_alive", side_effect=lambda pid: pid == 5_201),
+            mock.patch.object(devctl, "process_matches_record", return_value=True),
+        ):
+            rendered = devctl.lifecycle_diagnostics(self.root, trace)
+
+        self.assertIn(
+            'diagnostic:service name=evaluation record=present pid=5201 port=4220 '
+            'alive=yes ownership=proven listener=absent child=not-retained '
+            'readiness="readiness endpoint unavailable"',
+            rendered,
+        )
+        self.assertIn(
+            'diagnostic:service name=artifacts record=present pid=5202 port=4223 '
+            'alive=no ownership=process-exited listener=absent child=not-retained '
+            'readiness="process exited"',
+            rendered,
+        )
+
+    def test_a_healthy_service_contributes_no_log_tail(self) -> None:
+        healthy = devctl.SERVICE_BY_NAME["evaluation"]
+        record = self.record(healthy, pid=5_301)
+        self.write_record(record)
+        self.write_log(healthy.name, '{"event":"local_service_started"}\n')
+        trace = devctl.LifecycleTrace()
+        trace.note_readiness(healthy.name, "ready")
+        listeners = {port: [] for port in devctl.PORT_BLOCK}
+        listeners[record.port] = [devctl.Listener(5_301, "python3", "127.0.0.1:4220")]
+
+        with (
+            mock.patch.object(devctl, "discover_listeners_for_ports", return_value=listeners),
+            mock.patch.object(devctl, "process_is_alive", return_value=True),
+            mock.patch.object(devctl, "process_matches_record", return_value=True),
+        ):
+            rendered = "\n".join(devctl.lifecycle_diagnostics(self.root, trace))
+
+        self.assertIn("listener=owned listeners=1", rendered)
+        self.assertNotIn(f"diagnostic:log name={healthy.name}", rendered)
+        self.assertIn("diagnostic:log name=artifacts", rendered)
+
+    def test_log_tail_is_bounded_and_never_reveals_the_instance_token(self) -> None:
+        service = devctl.SERVICE_BY_NAME["test-patterns"]
+        record = self.record(service, pid=5_401)
+        self.write_record(record)
+        filler = "\n".join(
+            json.dumps({"event": "local_http_request", "sequence": index, "pad": "p" * 900})
+            for index in range(60)
+        )
+        self.write_log(
+            service.name,
+            filler + "\n" + json.dumps({"event": "leak", "token": record.instance_token}) + "\n",
+        )
+
+        with (
+            mock.patch.object(devctl, "discover_listeners_for_ports", return_value={}),
+            mock.patch.object(devctl, "process_is_alive", return_value=False),
+        ):
+            rendered = devctl.lifecycle_diagnostics(self.root, trace=devctl.LifecycleTrace())
+
+        tail = [line for line in rendered if line.startswith(f"diagnostic:log name={service.name}")]
+        self.assertLessEqual(len(tail), devctl.MAX_DIAGNOSTIC_LOG_LINES)
+        self.assertTrue(tail)
+        for line in tail:
+            self.assertNotIn(record.instance_token, line)
+            self.assertLessEqual(
+                len(line) - len(f"diagnostic:log name={service.name} record="),
+                devctl.MAX_DIAGNOSTIC_TEXT_CHARACTERS,
+            )
+        self.assertIn("[redacted]", tail[-1])
+        # The first retained record is a fragment of an earlier line and is dropped.
+        for line in tail:
+            self.assertIn("record={", line)
+
+    def test_a_retained_child_that_crashed_reports_its_exit_status(self) -> None:
+        service = devctl.SERVICE_BY_NAME["evaluation"]
+        record = self.record(service, pid=5_501)
+        self.write_record(record)
+        trace = devctl.LifecycleTrace()
+        trace.note_child(
+            devctl.SpawnedService(
+                record=record,
+                process=SimpleNamespace(poll=lambda: 2),  # type: ignore[arg-type]
+            )
+        )
+        trace.note_readiness(service.name, "process exited")
+
+        with (
+            mock.patch.object(devctl, "discover_listeners_for_ports", return_value={}),
+            mock.patch.object(devctl, "process_is_alive", return_value=False),
+        ):
+            rendered = devctl.lifecycle_diagnostics(self.root, trace)
+
+        self.assertIn(
+            'diagnostic:service name=evaluation record=present pid=5501 port=4220 '
+            'alive=no ownership=process-exited listener=absent child=exited(2) '
+            'readiness="process exited"',
+            rendered,
+        )
+
+    def test_diagnostics_report_their_own_failure_instead_of_masking_it(self) -> None:
+        def unavailable(_root: Path, _trace: devctl.LifecycleTrace) -> list[str]:
+            raise devctl.DevContractError("diagnostic_timeout", "inspection exceeded its budget")
+
+        with mock.patch.object(devctl, "_collect_lifecycle_diagnostics", side_effect=unavailable):
+            rendered = devctl.lifecycle_diagnostics(self.root, devctl.LifecycleTrace())
+
+        self.assertEqual(
+            rendered,
+            [
+                "diagnostic:begin scope=local-development-lifecycle",
+                "diagnostic:incomplete code=diagnostic_timeout",
+                "diagnostic:end",
+            ],
+        )
+
+    def test_every_diagnosed_command_emits_diagnostics_on_failure(self) -> None:
+        self.assertEqual(
+            devctl.DIAGNOSED_COMMANDS,
+            frozenset({"up", "down", "health", "e2e-server"}),
+        )
+        emitted: list[str] = []
+
+        def failing_health(
+            _root: Path, _timeout: float, trace: devctl.LifecycleTrace | None = None
+        ) -> None:
+            self.assertIsNotNone(trace)
+            raise devctl.DevContractError("health_timeout", "readiness deadline exhausted")
+
+        with (
+            mock.patch.object(devctl, "command_health", side_effect=failing_health),
+            mock.patch.object(
+                devctl, "lifecycle_diagnostics", return_value=["diagnostic:begin", "diagnostic:end"]
+            ),
+            mock.patch.object(devctl.sys, "stderr", new=SimpleNamespace(write=emitted.append)),
+        ):
+            self.assertEqual(devctl.main(["health", "--timeout", "5"]), 2)
+
+        printed = "".join(emitted)
+        self.assertIn("dev:health failed [health_timeout]", printed)
+        self.assertIn("diagnostic:begin", printed)
+
+
+class LoopbackBindContractTests(RepositoryLocalTempCase):
+    def test_bind_never_performs_a_reverse_dns_lookup(self) -> None:
+        state = dev_service.ServiceState(
+            dev_service.SERVICE_SPECS["evaluation"],
+            self.root,
+            dev_service.BIND_HOST,
+            4229,
+            "d" * 32,
+        )
+        with mock.patch(
+            "socket.getfqdn",
+            side_effect=AssertionError("bind must not resolve names"),
+        ):
+            server = dev_service.BoundedThreadingHTTPServer(
+                (dev_service.BIND_HOST, 4229), dev_service.RequestHandler, state
+            )
+        try:
+            self.assertEqual(server.server_name, dev_service.BIND_HOST)
+            self.assertEqual(server.server_port, 4229)
+            # listen() ran, so a controller probe reaches a real listener.
+            with socket.create_connection((dev_service.BIND_HOST, 4229), timeout=2.0):
+                pass
+        finally:
+            server.server_close()
+
+    def test_service_logs_the_bind_phase_before_it_can_stall(self) -> None:
+        source = (REPO_ROOT / "scripts" / "dev_service.py").read_text(encoding="utf-8")
+        binding = source.index('"event": "local_service_binding"')
+        construction = source.index("server = BoundedThreadingHTTPServer(")
+        started = source.index('"event": "local_service_started"')
+        self.assertLess(binding, construction)
+        self.assertLess(construction, started)
 
 
 class CommittedSurfaceTests(unittest.TestCase):

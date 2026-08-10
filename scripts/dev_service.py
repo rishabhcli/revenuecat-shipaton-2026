@@ -19,6 +19,7 @@ from logging.handlers import RotatingFileHandler
 import os
 import re
 import signal
+import socketserver
 import stat
 import subprocess
 import sys
@@ -1231,6 +1232,22 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
         self._request_slots = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
         super().__init__(address, handler)
 
+    def server_bind(self) -> None:
+        """Bind the loopback socket without an unbounded reverse-DNS lookup.
+
+        ``http.server.HTTPServer.server_bind`` calls ``socket.getfqdn`` between
+        ``bind`` and ``listen``.  That is a resolver call with no deadline placed
+        directly in the startup path of a loopback-only service, so a slow or
+        unreachable resolver leaves the socket bound but never listening while
+        the controller can only observe a live process refusing connections.
+        The literal bind host is already the exact identity this service serves.
+        """
+
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = str(host)
+        self.server_port = int(port)
+
     def process_request(self, request: Any, client_address: Any) -> None:
         if not self._request_slots.acquire(blocking=False):
             request_id = uuid.uuid4().hex
@@ -1790,6 +1807,17 @@ def main(argv: list[str] | None = None) -> int:
             arguments.host,
             arguments.port,
             arguments.instance_token,
+        )
+        # Emitted before bind so that a startup stall is observable as a phase
+        # that began and never completed, rather than as silence.
+        emit_log(
+            {
+                "event": "local_service_binding",
+                "service": state.spec.name,
+                "bind_host": state.host,
+                "port": state.port,
+                "timestamp": utc_now(),
+            }
         )
         server = BoundedThreadingHTTPServer((arguments.host, arguments.port), RequestHandler, state)
     except (ConfigurationError, OSError) as error:

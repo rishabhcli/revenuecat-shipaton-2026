@@ -201,6 +201,8 @@ The root `Makefile` now defines the repository's canonical, non-divergent comman
 
 The successful local `dev:*` lifecycle establishes local harness readiness only. It does not establish a signed app, physical-device behavior, a RevenueCat provider integration, release-gate success, clean-checkout success, or production readiness.
 
+When `dev:up`, `dev:health`, `dev:down`, or the Playwright coordinator fails, it writes a bounded `diagnostic:` block to standard error before exiting non-zero. That block names the lifecycle phase that consumed the deadline, and per service its PID record, liveness, ownership proof, listener state, retained-child exit status, and last observed readiness detail. A bounded, token-redacted tail of the service log is printed only for services that were not healthy. Services log `local_service_binding` before the socket is bound and `local_service_started` after it is listening, so a startup stall is observable as a phase that began and never completed. CI archives `.dev/logs/` on every result so those per-service logs survive the runner.
+
 All redirectable verification writes are repository-local: npm cache and Playwright browsers use `.dev/cache/`, temporary files use `.dev/tmp/`, and logs use `.dev/logs/`. Initialization rejects symlinked or non-directory path components before any npm or browser command. `verify-all` requires tracked, staged, and non-ignored untracked content to remain byte-stable; changing ignored build/cache output is permitted only within the explicit inventory enforced by `tools/repository_state.py`.
 
 A new contributor should be able to move from a clean checkout to a verified local system without tribal knowledge.

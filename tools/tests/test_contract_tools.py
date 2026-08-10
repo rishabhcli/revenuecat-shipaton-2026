@@ -328,6 +328,38 @@ class CleanCheckoutHarnessTests(unittest.TestCase):
         self.assertIn("    timeout-minutes: 40", workflow)
         self.assertIn("        timeout-minutes: 35", workflow)
 
+    def test_ci_archives_the_service_logs_that_explain_a_lifecycle_failure(self) -> None:
+        workflow = (
+            check_policy.ROOT / ".github" / "workflows" / "verify.yml"
+        ).read_text(encoding="utf-8")
+        archived = check_policy.workflow_archive_paths(workflow)
+        self.assertIn(".dev/logs/verify-all.log", archived)
+        self.assertIn(".dev/logs/*.log", archived)
+        for entry in archived:
+            self.assertTrue(
+                entry.startswith(".dev/logs/"),
+                msg=f"{entry} would archive content outside the repository-local log scope",
+            )
+
+    def test_workflow_archive_paths_reads_every_block_scalar_entry(self) -> None:
+        workflow = (
+            "      - name: Archive\n"
+            "        with:\n"
+            "          path: |\n"
+            "            .dev/logs/verify-all.log\n"
+            "            /etc/passwd\n"
+            "          retention-days: 14\n"
+        )
+        self.assertEqual(
+            check_policy.workflow_archive_paths(workflow),
+            [".dev/logs/verify-all.log", "/etc/passwd"],
+        )
+        self.assertEqual(
+            check_policy.workflow_archive_paths("          path: .dev/logs/verify-all.log\n"),
+            [".dev/logs/verify-all.log"],
+        )
+        self.assertEqual(check_policy.workflow_archive_paths("name: verify\n"), [])
+
     def test_clean_worktree_uses_exact_repository_basename_inside_unique_container(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             parent = Path(temporary)

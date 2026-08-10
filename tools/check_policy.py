@@ -455,6 +455,31 @@ def target_depends_on(
     )
 
 
+def workflow_archive_paths(workflow: str) -> list[str]:
+    """Return every artifact path the verify workflow archives.
+
+    A block scalar is read literally by YAML, so each indented line under
+    ``path: |`` is a real path entry and must be validated as one.
+    """
+
+    lines = workflow.splitlines()
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped == "path: |":
+            indent = len(line) - len(line.lstrip(" "))
+            collected: list[str] = []
+            for candidate in lines[index + 1 :]:
+                if not candidate.strip():
+                    break
+                if len(candidate) - len(candidate.lstrip(" ")) <= indent:
+                    break
+                collected.append(candidate.strip())
+            return collected
+        if stripped.startswith("path: "):
+            return [stripped[len("path: ") :].strip()]
+    return []
+
+
 def validate_make_writable_scope(makefile: str) -> list[str]:
     failures: list[str] = []
     required_fragments = (
@@ -545,8 +570,14 @@ def main() -> int:
             failures.append(f"verify workflow lacks repository-local writable scope: {fragment}")
     if "DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer" not in workflow:
         failures.append("verify workflow must pin the installed Xcode 26.6 path")
-    if "path: .dev/logs/verify-all.log" not in workflow:
-        failures.append("verify workflow must archive only the exact canonical log path")
+    archive_paths = workflow_archive_paths(workflow)
+    if not archive_paths:
+        failures.append("verify workflow must archive an explicit repository-local log path list")
+    elif ".dev/logs/verify-all.log" not in archive_paths:
+        failures.append("verify workflow must archive the exact canonical verification log")
+    for entry in archive_paths:
+        if not entry.startswith(".dev/logs/") or ".." in entry:
+            failures.append(f"verify workflow archives a path outside .dev/logs/: {entry}")
     if "include-hidden-files: true" not in workflow:
         failures.append("verify workflow must explicitly include the hidden .dev verification log")
 

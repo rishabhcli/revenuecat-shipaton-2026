@@ -48,6 +48,10 @@ SHUTDOWN_REQUEST_TIMEOUT_SECONDS: Final = 1.5
 STOP_FINAL_IDENTITY_RESERVE_SECONDS: Final = 1.0
 MAX_PID_RECORD_BYTES: Final = 16_384
 MAX_HEALTH_BYTES: Final = 65_536
+DIAGNOSTIC_BUDGET_SECONDS: Final = 10.0
+MAX_DIAGNOSTIC_LOG_BYTES: Final = 4_096
+MAX_DIAGNOSTIC_LOG_LINES: Final = 12
+MAX_DIAGNOSTIC_TEXT_CHARACTERS: Final = 512
 DEVCTL_TOKEN_HEADER: Final = "X-Devctl-Instance-Token"
 INSTANCE_TOKEN_RE: Final = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 PORT_LINE_RE: Final = re.compile(r"^(PORT_[0-3])\s*=\s*([0-9]+)\s*(?:#.*)?$")
@@ -134,6 +138,84 @@ def _bounded_timeout(deadline: OperationDeadline | None, maximum_seconds: float)
     if deadline is None:
         return maximum_seconds
     return deadline.remaining(maximum_seconds)
+
+
+@dataclass
+class PhaseObservation:
+    """One observed lifecycle phase, recorded whether or not it completed."""
+
+    name: str
+    started_offset: float
+    ended_offset: float | None = None
+    status: str = "started"
+
+
+class LifecycleTrace:
+    """Record which lifecycle phase consumed an operation's deadline.
+
+    The trace observes only. It never changes control flow, never extends a
+    deadline, and is never the reason an operation is reported as succeeding.
+    """
+
+    def __init__(self) -> None:
+        self._origin = time.monotonic()
+        self._phases: list[PhaseObservation] = []
+        self._readiness: dict[str, str] = {}
+        self._children: dict[str, Any] = {}
+
+    def _offset(self) -> float:
+        return time.monotonic() - self._origin
+
+    @contextlib.contextmanager
+    def phase(self, name: str) -> Iterator[None]:
+        observation = PhaseObservation(name=name, started_offset=self._offset())
+        self._phases.append(observation)
+        try:
+            yield
+        except BaseException:
+            observation.ended_offset = self._offset()
+            observation.status = "failed"
+            raise
+        observation.ended_offset = self._offset()
+        observation.status = "completed"
+
+    def mark(self, name: str) -> None:
+        offset = self._offset()
+        self._phases.append(
+            PhaseObservation(name=name, started_offset=offset, ended_offset=offset, status="reached")
+        )
+
+    def note_readiness(self, service_name: str, detail: str) -> None:
+        self._readiness[service_name] = detail[:MAX_DIAGNOSTIC_TEXT_CHARACTERS]
+
+    def readiness_detail(self, service_name: str) -> str:
+        return self._readiness.get(service_name, "not observed")
+
+    def note_child(self, spawned: SpawnedService) -> None:
+        """Retain a spawned child so its exit status stays observable."""
+
+        self._children[spawned.record.service] = spawned.process
+
+    def child_status(self, service_name: str) -> str:
+        process = self._children.get(service_name)
+        if process is None:
+            return "not-retained"
+        status = process.poll()
+        if status is None:
+            return "running"
+        return f"exited({status})"
+
+    def phase_lines(self) -> list[str]:
+        lines: list[str] = []
+        for observation in self._phases:
+            ended = observation.ended_offset if observation.ended_offset is not None else self._offset()
+            lines.append(
+                f"diagnostic:phase name={observation.name} "
+                f"started_s={observation.started_offset:.3f} "
+                f"elapsed_s={max(0.0, ended - observation.started_offset):.3f} "
+                f"status={observation.status}"
+            )
+        return lines
 
 
 @dataclass(frozen=True)
@@ -931,6 +1013,7 @@ def wait_for_record_health(
     *,
     cancelled: Any | None = None,
     deadline: OperationDeadline | None = None,
+    trace: LifecycleTrace | None = None,
 ) -> None:
     if deadline is None:
         deadline = _deadline_after(
@@ -952,7 +1035,11 @@ def wait_for_record_health(
         else:
             ready, detail = readiness_probe(record, deadline=deadline)
             if ready:
+                if trace is not None:
+                    trace.note_readiness(record.service, detail)
                 return
+        if trace is not None:
+            trace.note_readiness(record.service, detail)
         time.sleep(min(0.1, deadline.remaining()))
 
 
@@ -963,6 +1050,7 @@ def wait_for_health(
     *,
     require_every_record: bool = True,
     deadline: OperationDeadline | None = None,
+    trace: LifecycleTrace | None = None,
 ) -> dict[str, str]:
     if deadline is None:
         deadline = _deadline_after(
@@ -972,6 +1060,12 @@ def wait_for_health(
         )
     pending = {service.name for service in SERVICES}
     details: dict[str, str] = {}
+
+    def observe(service_name: str, detail: str) -> None:
+        details[service_name] = detail
+        if trace is not None:
+            trace.note_readiness(service_name, detail)
+
     while pending:
         deadline.check()
         for service in SERVICES:
@@ -983,27 +1077,27 @@ def wait_for_health(
             except DevContractError as error:
                 if error.code in {deadline.timeout_code, deadline.cancellation_code}:
                     raise
-                details[service.name] = f"{error.code}: {error}"
+                observe(service.name, f"{error.code}: {error}")
                 continue
             deadline.check()
             if record is None:
-                details[service.name] = "PID record missing"
+                observe(service.name, "PID record missing")
                 if not require_every_record:
                     pending.remove(service.name)
                 continue
             expected_port = configuration.for_service(service)
             if record.port != expected_port:
-                details[service.name] = f"PID record uses {record.port}, expected {expected_port}"
+                observe(service.name, f"PID record uses {record.port}, expected {expected_port}")
                 continue
             if not process_is_alive(record.pid):
                 deadline.check()
-                details[service.name] = "process exited"
+                observe(service.name, "process exited")
                 continue
             if not process_matches_record(record, deadline=deadline):
-                details[service.name] = "process ownership could not be proven"
+                observe(service.name, "process ownership could not be proven")
                 continue
             ready, detail = readiness_probe(record, deadline=deadline)
-            details[service.name] = detail
+            observe(service.name, detail)
             if ready:
                 pending.remove(service.name)
         if pending:
@@ -1193,6 +1287,168 @@ def stop_spawned_service(
     remove_pid_record_if_same(root, record)
 
 
+def _diagnostic_text(value: str) -> str:
+    """Render one bounded single-line diagnostic value with no control characters."""
+
+    collapsed = "".join(
+        character if character.isprintable() else "?" for character in value
+    )
+    return collapsed[:MAX_DIAGNOSTIC_TEXT_CHARACTERS]
+
+
+def service_log_tail(log_path: Path, *, redact: Sequence[str] = ()) -> list[str]:
+    """Read a bounded tail of one service log without following a symlink."""
+
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        descriptor = os.open(log_path, flags)
+    except FileNotFoundError:
+        return ["log file absent"]
+    except OSError:
+        return ["log file unreadable"]
+    try:
+        file_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(file_stat.st_mode):
+            return ["log path is not a regular file"]
+        offset = max(0, file_stat.st_size - MAX_DIAGNOSTIC_LOG_BYTES)
+        os.lseek(descriptor, offset, os.SEEK_SET)
+        payload = os.read(descriptor, MAX_DIAGNOSTIC_LOG_BYTES)
+    except OSError:
+        return ["log file unreadable"]
+    finally:
+        os.close(descriptor)
+    text = payload.decode("utf-8", errors="replace")
+    lines = [line for line in text.splitlines() if line.strip()]
+    if offset > 0 and lines:
+        # The first retained line is a fragment of an earlier record.
+        lines = lines[1:]
+    if not lines:
+        return ["no log records"]
+    rendered: list[str] = []
+    for line in lines[-MAX_DIAGNOSTIC_LOG_LINES:]:
+        for secret in redact:
+            if secret:
+                line = line.replace(secret, "[redacted]")
+        rendered.append(_diagnostic_text(line))
+    return rendered
+
+
+def _service_diagnostic_line(
+    root: Path,
+    service: ServiceDefinition,
+    trace: LifecycleTrace,
+    listeners: Mapping[int, list[Listener]] | None,
+    deadline: OperationDeadline,
+) -> tuple[str, PidRecord | None, bool]:
+    """Describe one service's observed lifecycle state without changing it.
+
+    The third element reports whether every observed signal was healthy, so that
+    a caller can spend its bounded log budget on the services that were not.
+    """
+
+    deadline.check()
+    fields = [f"name={service.name}"]
+    try:
+        record = read_pid_record(root, service.name)
+    except DevContractError as error:
+        fields.append(f"record=unreadable code={error.code}")
+        return "diagnostic:service " + " ".join(fields), None, False
+    healthy = True
+    if record is None:
+        healthy = False
+        fields.append("record=absent pid=none alive=unknown ownership=unknown")
+    else:
+        alive = process_is_alive(record.pid)
+        fields.append(f"record=present pid={record.pid} port={record.port}")
+        fields.append(f"alive={'yes' if alive else 'no'}")
+        if not alive:
+            healthy = False
+            fields.append("ownership=process-exited")
+        else:
+            try:
+                proven = process_matches_record(record, deadline=deadline)
+            except DevContractError:
+                healthy = False
+                fields.append("ownership=unknown")
+            else:
+                healthy = healthy and proven
+                fields.append(f"ownership={'proven' if proven else 'unproven'}")
+    port = record.port if record is not None else None
+    if listeners is None or port is None:
+        healthy = False
+        fields.append("listener=unknown" if listeners is None else "listener=not-applicable")
+    else:
+        holders = listeners.get(port, [])
+        owned = bool(holders) and any(holder.pid == record.pid for holder in holders)
+        healthy = healthy and owned
+        if not holders:
+            fields.append("listener=absent")
+        else:
+            fields.append(f"listener={'owned' if owned else 'foreign'} listeners={len(holders)}")
+    child_status = trace.child_status(service.name)
+    healthy = healthy and child_status in {"not-retained", "running"}
+    fields.append(f"child={child_status}")
+    readiness = trace.readiness_detail(service.name)
+    healthy = healthy and readiness == "ready"
+    fields.append(f'readiness="{_diagnostic_text(readiness)}"')
+    return "diagnostic:service " + " ".join(fields), record, healthy
+
+
+def _collect_lifecycle_diagnostics(root: Path, trace: LifecycleTrace) -> list[str]:
+    deadline = _deadline_after(
+        DIAGNOSTIC_BUDGET_SECONDS,
+        timeout_code="diagnostic_timeout",
+        timeout_message=(
+            f"lifecycle diagnostics exceeded their bounded {DIAGNOSTIC_BUDGET_SECONDS:g}s budget"
+        ),
+    )
+    lines = list(trace.phase_lines())
+    try:
+        listeners: Mapping[int, list[Listener]] | None = discover_listeners_for_ports(
+            PORT_BLOCK, deadline=deadline
+        )
+    except (DevContractError, OSError):
+        listeners = None
+    for service in SERVICES:
+        deadline.check()
+        line, record, healthy = _service_diagnostic_line(
+            root, service, trace, listeners, deadline
+        )
+        lines.append(line)
+        if healthy:
+            # A service that passed every observed signal did not cause this
+            # failure; its log tail would only bury the one that did.
+            continue
+        deadline.check()
+        log_path = (root / ".dev" / "logs" / f"{service.name}.log").absolute()
+        secrets = (record.instance_token,) if record is not None else ()
+        for entry in service_log_tail(log_path, redact=secrets):
+            lines.append(f"diagnostic:log name={service.name} record={entry}")
+    return lines
+
+
+def lifecycle_diagnostics(root: Path, trace: LifecycleTrace) -> list[str]:
+    """Render bounded observation-only diagnostics after a lifecycle failure.
+
+    Diagnostics never mask, replace, or downgrade the original failure. When the
+    inspection itself cannot complete, that fact is reported rather than hidden.
+    """
+
+    lines = ["diagnostic:begin scope=local-development-lifecycle"]
+    try:
+        lines.extend(_collect_lifecycle_diagnostics(root, trace))
+    except DevContractError as error:
+        lines.append(f"diagnostic:incomplete code={error.code}")
+    except OSError as error:
+        lines.append(f"diagnostic:incomplete code=os_error errno={error.errno}")
+    lines.append("diagnostic:end")
+    return lines
+
+
 def command_preflight(root: Path) -> None:
     with controller_lock(root):
         state = preflight(root)
@@ -1203,7 +1459,10 @@ def command_preflight(root: Path) -> None:
         print(f"  {service.name}: {BIND_HOST}:{state.configuration.for_service(service)}")
 
 
-def command_up(root: Path, timeout_seconds: float) -> None:
+def command_up(
+    root: Path, timeout_seconds: float, trace: LifecycleTrace | None = None
+) -> None:
+    trace = LifecycleTrace() if trace is None else trace
     deadline = _deadline_after(
         timeout_seconds,
         timeout_code="up_timeout",
@@ -1211,31 +1470,37 @@ def command_up(root: Path, timeout_seconds: float) -> None:
     )
     started: list[SpawnedService] = []
     with controller_lock(root, deadline=deadline):
+        trace.mark("controller-lock-acquired")
         try:
-            state = preflight(root, deadline=deadline)
+            with trace.phase("preflight"):
+                state = preflight(root, deadline=deadline)
             # Reconcile only this repository's specifically identified processes if ports.env changed.
+            with trace.phase("reconcile"):
+                for service in SERVICES:
+                    deadline.check()
+                    existing = state.active_records.get(service.name)
+                    if existing is not None:
+                        expected_port = state.configuration.for_service(service)
+                        ready, _detail = readiness_probe(existing, deadline=deadline)
+                        if existing.port != expected_port or not ready:
+                            stop_owned_record(root, existing, parent_deadline=deadline)
             for service in SERVICES:
-                deadline.check()
-                existing = state.active_records.get(service.name)
-                if existing is not None:
-                    expected_port = state.configuration.for_service(service)
-                    ready, _detail = readiness_probe(existing, deadline=deadline)
-                    if existing.port != expected_port or not ready:
-                        stop_owned_record(root, existing, parent_deadline=deadline)
-            for service in SERVICES:
-                deadline.check()
-                existing = read_pid_record(root, service.name)
-                deadline.check()
-                if existing is not None:
-                    continue
-                spawned = spawn_service(
-                    root, service, state.configuration.for_service(service)
+                with trace.phase(f"spawn:{service.name}"):
+                    deadline.check()
+                    existing = read_pid_record(root, service.name)
+                    deadline.check()
+                    if existing is not None:
+                        continue
+                    spawned = spawn_service(
+                        root, service, state.configuration.for_service(service)
+                    )
+                    started.append(spawned)
+                    trace.note_child(spawned)
+                    deadline.check()
+            with trace.phase("readiness"):
+                wait_for_health(
+                    root, state.configuration, timeout_seconds, deadline=deadline, trace=trace
                 )
-                started.append(spawned)
-                deadline.check()
-            wait_for_health(
-                root, state.configuration, timeout_seconds, deadline=deadline
-            )
             deadline.check()
             records = []
             for service in SERVICES:
@@ -1243,9 +1508,11 @@ def command_up(root: Path, timeout_seconds: float) -> None:
                 records.append(read_pid_record(root, service.name))
                 deadline.check()
         except BaseException:
+            trace.mark("cleanup-started")
             for spawned in reversed(started):
                 with contextlib.suppress(DevContractError, OSError):
                     stop_spawned_service(root, spawned, parent_deadline=deadline)
+            trace.mark("cleanup-finished")
             raise
     print("dev:up ok: every allocated service returned its owned readiness document")
     for record in records:
@@ -1253,26 +1520,34 @@ def command_up(root: Path, timeout_seconds: float) -> None:
             print(f"  {record.service}: pid {record.pid}, http://{record.host}:{record.port}")
 
 
-def command_health(root: Path, timeout_seconds: float) -> None:
+def command_health(
+    root: Path, timeout_seconds: float, trace: LifecycleTrace | None = None
+) -> None:
+    trace = LifecycleTrace() if trace is None else trace
     deadline = _deadline_after(
         timeout_seconds,
         timeout_code="health_timeout",
         timeout_message=f"dev:health did not complete within its total {timeout_seconds:g}s deadline",
     )
     deadline.check()
-    configuration = parse_ports_file(root / "ports.env")
+    with trace.phase("configuration"):
+        configuration = parse_ports_file(root / "ports.env")
     deadline.check()
-    details = wait_for_health(
-        root, configuration, timeout_seconds, deadline=deadline
-    )
+    with trace.phase("readiness"):
+        details = wait_for_health(
+            root, configuration, timeout_seconds, deadline=deadline, trace=trace
+        )
     print("dev:health ok: all services are ready (TCP acceptance alone was not used)")
     for service in SERVICES:
         print(f"  {service.name}: {details[service.name]}")
 
 
 def command_down(
-    root: Path, timeout_seconds: float = DEFAULT_DOWN_TIMEOUT_SECONDS
+    root: Path,
+    timeout_seconds: float = DEFAULT_DOWN_TIMEOUT_SECONDS,
+    trace: LifecycleTrace | None = None,
 ) -> None:
+    trace = LifecycleTrace() if trace is None else trace
     deadline = _deadline_after(
         timeout_seconds,
         timeout_code="down_timeout",
@@ -1281,17 +1556,19 @@ def command_down(
     stopped: list[tuple[str, int]] = []
     errors: list[str] = []
     with controller_lock(root, deadline=deadline):
+        trace.mark("controller-lock-acquired")
         # PID records are the sole authority; listener discovery is deliberately not used to kill.
         for service in SERVICES:
             try:
-                deadline.check()
-                record = read_pid_record(root, service.name)
-                deadline.check()
-                if record is None:
-                    continue
-                stop_owned_record(root, record, parent_deadline=deadline)
-                deadline.check()
-                stopped.append((record.service, record.pid))
+                with trace.phase(f"stop:{service.name}"):
+                    deadline.check()
+                    record = read_pid_record(root, service.name)
+                    deadline.check()
+                    if record is None:
+                        continue
+                    stop_owned_record(root, record, parent_deadline=deadline)
+                    deadline.check()
+                    stopped.append((record.service, record.pid))
             except (DevContractError, OSError) as error:
                 errors.append(f"{service.name}: {error}")
                 if isinstance(error, DevContractError) and error.code == deadline.timeout_code:
@@ -1307,9 +1584,12 @@ def command_down(
     print("dev:down ok: only authenticated repository-owned services self-stopped")
 
 
-def command_e2e_server(root: Path, timeout_seconds: float) -> None:
+def command_e2e_server(
+    root: Path, timeout_seconds: float, trace: LifecycleTrace | None = None
+) -> None:
     """Own the complete service block for one Playwright coordinator lifecycle."""
 
+    trace = LifecycleTrace() if trace is None else trace
     startup_expires_at = time.monotonic() + timeout_seconds
     stop_requested = threading.Event()
     startup_deadline = OperationDeadline(
@@ -1334,7 +1614,9 @@ def command_e2e_server(root: Path, timeout_seconds: float) -> None:
     try:
         startup_deadline.check()
         with controller_lock(root, deadline=startup_deadline):
-            state = preflight(root, deadline=startup_deadline)
+            trace.mark("controller-lock-acquired")
+            with trace.phase("preflight"):
+                state = preflight(root, deadline=startup_deadline)
             if state.active_records:
                 active = ", ".join(sorted(state.active_records))
                 raise DevContractError(
@@ -1350,19 +1632,23 @@ def command_e2e_server(root: Path, timeout_seconds: float) -> None:
                 service for service in SERVICES if service.name != "test-patterns"
             ) + (SERVICE_BY_NAME["test-patterns"],)
             for service in ordered_services:
-                remaining_startup_seconds()
-                spawned = spawn_service(
-                    root, service, state.configuration.for_service(service)
-                )
-                spawned_services.append(spawned)
-                startup_deadline.check()
-                wait_for_record_health(
-                    spawned.record,
-                    remaining_startup_seconds(),
-                    cancelled=stop_requested,
-                    deadline=startup_deadline,
-                )
-                startup_deadline.check()
+                with trace.phase(f"spawn:{service.name}"):
+                    remaining_startup_seconds()
+                    spawned = spawn_service(
+                        root, service, state.configuration.for_service(service)
+                    )
+                    spawned_services.append(spawned)
+                    trace.note_child(spawned)
+                    startup_deadline.check()
+                with trace.phase(f"readiness:{service.name}"):
+                    wait_for_record_health(
+                        spawned.record,
+                        remaining_startup_seconds(),
+                        cancelled=stop_requested,
+                        deadline=startup_deadline,
+                        trace=trace,
+                    )
+                    startup_deadline.check()
 
         print("dev:e2e-server ready: all four owned services passed semantic readiness", flush=True)
         while not stop_requested.wait(0.1):
@@ -1443,24 +1729,31 @@ def parse_arguments(argv: Sequence[str]) -> argparse.Namespace:
     return parser.parse_args(list(argv))
 
 
+DIAGNOSED_COMMANDS: Final = frozenset({"up", "down", "health", "e2e-server"})
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = parse_arguments(sys.argv[1:] if argv is None else argv)
     root = repository_root()
+    trace = LifecycleTrace()
     try:
         if arguments.command == "preflight":
             command_preflight(root)
         elif arguments.command == "up":
-            command_up(root, arguments.timeout)
+            command_up(root, arguments.timeout, trace)
         elif arguments.command == "down":
-            command_down(root, arguments.timeout)
+            command_down(root, arguments.timeout, trace)
         elif arguments.command == "health":
-            command_health(root, arguments.timeout)
+            command_health(root, arguments.timeout, trace)
         elif arguments.command == "e2e-server":
-            command_e2e_server(root, arguments.timeout)
+            command_e2e_server(root, arguments.timeout, trace)
         else:  # pragma: no cover - argparse prevents this branch.
             raise DevContractError("command_unknown", f"unknown command {arguments.command}")
     except DevContractError as error:
         print(f"dev:{arguments.command} failed [{error.code}]: {error}", file=sys.stderr)
+        if arguments.command in DIAGNOSED_COMMANDS:
+            for line in lifecycle_diagnostics(root, trace):
+                print(line, file=sys.stderr)
         return 2
     return 0
 

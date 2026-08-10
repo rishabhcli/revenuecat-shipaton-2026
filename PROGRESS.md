@@ -225,3 +225,41 @@ This file is append-only. Each entry records delivered behavior, exact verificat
 3. Run the targeted lifecycle tests, `make test-integration`, `make test-e2e`, `make verify-clean`, and restore `make dev:health`. Commit regenerable clean evidence only for the replacement commit that passes.
 4. Push and require the exact replacement SHA's GitHub Actions verification to be green; record its run URL and artifact. Only then may Tier 0 exit.
 5. After Tier 0 is green, resume the lowest incomplete Tier 1 work, beginning with the I2 fail-closed live-correction boundary because preventing a false green protects the user from the highest-impact wrong result. Add its real boundary assertion, component-failure attack, structured operational event, production alert contract, and runbook before moving to the physical Tier 2 camera-control kill test.
+
+## 2026-08-10T19:45:00Z — Observable lifecycle failure diagnostics and a bounded loopback bind
+
+### Why this was the selected item
+
+- `GOAL.md` section 10.1 item 2 selects the failing release gate. Tier 0 cannot exit while the exact-commit GitHub Actions verification is red, and the previous handoff selected "reproduce and diagnose run 31402791964 ... preserve per-service startup and shutdown diagnostics on CI failure so the exact unavailable phase is observable" as the first step.
+- The CI failure was truthful but opaque. `dev:up failed [up_timeout]` named no phase and no service; `dev:down` then reported three unavailable shutdown endpoints with no state for the fourth. Only `.dev/logs/verify-all.log` was archived, so every per-service log died with the runner. No further diagnosis was possible from committed evidence.
+
+### Behavior delivered
+
+- `scripts/devctl.py` gained `LifecycleTrace`, an observation-only recorder that never changes control flow, never extends a deadline, and is never the reason an operation reports success. It records phase start/elapsed/status, the last readiness detail per service, and the retained `Popen` child of each spawned service.
+- `command_up`, `command_health`, `command_down`, and `command_e2e_server` now record their phases (`controller-lock-acquired`, `preflight`, `reconcile`, `spawn:<service>`, `readiness`, `stop:<service>`, `cleanup-started`, `cleanup-finished`). `wait_for_health` and `wait_for_record_health` publish each observed readiness detail into the trace instead of discarding it on timeout.
+- On any `up`/`down`/`health`/`e2e-server` failure the CLI prints a bounded `diagnostic:` block to stderr after the original failure line: every phase with its elapsed seconds and status, then per service its record presence, PID, port, liveness, ownership proof, listener ownership, retained-child exit status, and last readiness detail. The block runs under its own independent 10-second deadline and reports `diagnostic:incomplete` rather than masking, replacing, or downgrading the original failure.
+- A bounded 4 KiB / 12-line / 512-character-per-line tail of a service log is printed only for services that were not healthy on every observed signal, and every occurrence of that service's instance token is structurally replaced with `[redacted]` before printing. The partial first line of a truncated tail is dropped rather than shown as a record.
+- `scripts/dev_service.py` emits `local_service_binding` before the socket is bound, so a startup stall is now observable as a phase that began and never completed rather than as silence.
+- `BoundedThreadingHTTPServer.server_bind` no longer inherits `http.server.HTTPServer.server_bind`. That inherited implementation calls `socket.getfqdn` between `bind` and `listen`: an unbounded resolver call placed directly in the startup path of a loopback-only service. A slow or unreachable resolver leaves the socket bound but never listening, which the controller can only observe as a live process refusing connections. The override binds through `socketserver.TCPServer.server_bind` and uses the literal bind host as the server identity. This is a bounded-boundary defect fixed on its own merits; **no claim is made that it is the cause of the CI failure.**
+- `.github/workflows/verify.yml` archives `.dev/logs/verify-all.log`, `.dev/logs/*.log`, and the rotated `.dev/logs/*.log.[1-3]` on every result, so per-service logs survive the runner. `tools/check_policy.py` now parses the archive block scalar with `workflow_archive_paths` and refuses any archived path outside `.dev/logs/`, which is strictly stronger than the previous single-literal check.
+- `README.md` documents the diagnostic block, the two service startup events, and the CI log archive.
+
+### Commands run and evidence
+
+- `make test-python` passed 93/93 (up from 92) and `make test-tools` passed 31/31 (up from 29). New tests: the `up` timeout names the consuming phase and reports the services that were never spawned; a live process with no listener is distinguished from an exited one; a healthy service contributes no log tail; the tail is bounded and never reveals the instance token; a crashed retained child reports `child=exited(2)`; diagnostics report their own failure instead of masking it; every diagnosed command emits diagnostics; bind performs no reverse-DNS lookup and still listens; the bind event is logged before construction; CI archives the service logs; and the archive-path parser reads every block-scalar entry.
+- The reverse-DNS guard was proven load-bearing by confirming that a stock `http.server.ThreadingHTTPServer` raises when `socket.getfqdn` is patched to fail during bind, while the repository server binds and accepts a real loopback connection.
+- The diagnostic block was exercised against a real failure: one owned service was stopped through its authenticated shutdown endpoint and `devctl health --timeout 2` reported `phase name=readiness ... status=failed` plus `name=artifacts record=present pid=78178 alive=no ownership=process-exited listener=absent readiness="process exited"` with the matching 202 shutdown record in its log tail. The service was then restored by `make dev:up`.
+- `make lint`, `make test-integration`, `make test-e2e` (five Playwright tests), and `make verify-all` all passed locally; `verify-all` reported `tracked-content=stable index=stable untracked-content=stable ignored-artifacts=allowlisted services=ownership-stopped`. `make dev:preflight && make dev:up && make dev:health` was restored green afterwards.
+
+### What is now true that was not true before
+
+- A lifecycle failure in this repository names the phase that consumed the deadline and the exact per-service state at failure, on the local host and on CI, and the per-service logs that explain it are archived rather than discarded.
+- The loopback services no longer perform any name resolution between binding and listening.
+
+### What is still not true
+
+- No clean-checkout CI pass is claimed. This change makes the next CI failure diagnosable; it does not by itself prove the failure is fixed. The repository remains not in production and Tier 0 remains open.
+
+### Next item selected by `GOAL.md` section 10.1
+
+- Push this commit and read the exact SHA-pinned GitHub Actions run for it. If it is green, archive the regenerable clean/CI evidence and Tier 0 may exit. If it is red, the new `diagnostic:` block and archived service logs identify the failing phase and service directly; repair that specific cause without weakening the one-budget lifecycle contract and without any unchecked process termination.
