@@ -20,7 +20,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 REPOSITORY_NAME = "revenuecat-shipaton-2026"
-DEFAULT_TIMEOUT_SECONDS = 1_200
+DEFAULT_TIMEOUT_SECONDS = 1_800
 TERMINATION_GRACE_SECONDS = 10
 
 

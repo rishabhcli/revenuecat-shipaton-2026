@@ -90,3 +90,21 @@ This file is append-only. Each entry records delivered behavior, exact verificat
 ### Current truth and next item selected by GOAL.md section 10.1
 
 - The repository remains not in production, and Tier 0 remains open because detached clean and GitHub Actions evidence are still absent. Commit this bounded repair, rerun `make verify-clean` against that committed revision, restore the standing services, archive only a successful evidence artifact, then push and require the exact SHA-pinned workflow revision to pass.
+
+## 2026-08-10T11:14:04Z — Cold clean-check deadline calibration
+
+### Failure observed and cleanup verified
+
+- `make verify-clean` against commit `6e12491c65d549fee187910ebd038968dd39172a` preserved repository identity and progressed through bootstrap, the owned four-service lifecycle, strict lint/typecheck/release build, 29 repository-tool tests, 70 dev-contract tests, 52 Swift tests, and all-four integration. The cold Swift stages reported 82.86, 50.55, and 454.46 seconds; the run then reached the pinned 178.7 MiB Chromium installation and truthfully exited 124 at the declared 1,200-second harness deadline rather than overrunning or reporting success.
+- Process-group termination and the independent authenticated service cleanup succeeded. `git worktree list` showed only the source checkout, the failed evidence file contained `harness_timeout_seconds=1200` and `exit_code=124` and was deleted rather than archived, and the standing `make dev:preflight && make dev:up && make dev:health` gate was restored green.
+
+### Bounded calibration implemented
+
+- Increased the detached clean default deadline from 1,200 to 1,800 seconds based on the observed cold path, while retaining the parser's 1,800-second maximum. Increased the GitHub Actions job envelope from 25 to 40 minutes and bounded the canonical verification step itself at 35 minutes, reserving five minutes for failure-log upload and runner cleanup.
+- Documented that `make verify-clean` has a 30-minute default and cold-installs the pinned browser inside the detached checkout. Added contract assertions that 1,800 is the direct-tool/default Make value, 1,801 is refused, and CI retains the larger bounded envelopes.
+- `make test-tools` passed 29/29 tests. `make policy-check`, `python3 tools/check_text.py`, `actionlint .github/workflows/verify.yml`, Python bytecode compilation, `git diff --check`, and semantic `dev:health` passed. Independent timing review found the 30-minute local and 40-minute CI bounds sufficient without an unmeasured further expansion.
+
+### Current truth and next item selected by GOAL.md section 10.1
+
+- No detached clean pass or CI pass is claimed. The repository is still not in production and Tier 0 remains open. Commit this measured deadline calibration, rerun the cold detached gate, restore the standing services, and archive evidence only if the complete canonical contract exits zero.
+- Count correction for the first bullet of this entry: the timed-out `6e12491` run executed 28 repository-tool tests; the 29th timeout-contract test was added and passed afterward as part of the calibration change.

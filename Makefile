@@ -21,7 +21,7 @@ export NPM_CONFIG_CACHE
 export npm_config_cache
 export TMPDIR
 export PLAYWRIGHT_BROWSERS_PATH
-CLEAN_VERIFY_TIMEOUT_SECONDS ?= 1200
+CLEAN_VERIFY_TIMEOUT_SECONDS ?= 1800
 
 SWIFT := xcrun swift
 SWIFT_FORMAT := xcrun swift-format

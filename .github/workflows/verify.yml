@@ -15,7 +15,7 @@ jobs:
   verify:
     name: Clean contract verification
     runs-on: macos-26
-    timeout-minutes: 25
+    timeout-minutes: 40
     env:
       CI: "true"
       COMPOSE_PROJECT_NAME: revenuecat-shipaton-2026
@@ -45,6 +45,7 @@ jobs:
           cache: npm
 
       - name: Run the complete verification contract
+        timeout-minutes: 35
         shell: bash
         run: |
           set -o pipefail

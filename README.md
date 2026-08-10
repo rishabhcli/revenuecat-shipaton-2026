@@ -195,7 +195,7 @@ The root `Makefile` now defines the repository's canonical, non-divergent comman
 | `make test-e2e` | Own and health-check all four local services, then browser-test the original-pattern outcome through allocated port 4222 without reusing a listener | Defined; local harness E2E only, not an iOS app E2E test |
 | `make eval` | Run the current typed compatibility-evidence policy oracle | Defined; no physical result or compatibility claim |
 | `make dependency-audit` / `make sbom` | Audit locked development dependencies and generate development-harness dependency artifacts | Defined; not an iOS release SBOM |
-| `make verify-clean` | Refuse dirty/staged source, then run only `verify-all` from detached `HEAD` with a hard deadline and process-group cleanup | Defined; passing output not claimed here |
+| `make verify-clean` | Refuse dirty/staged source, then run only `verify-all` from detached `HEAD` with a 30-minute default hard deadline and process-group cleanup; a cold run installs the pinned browser inside the detached checkout | Defined; passing output not claimed here |
 | `make full-verify` / `make release-check` | Alias the canonical `verify-all` contract without divergent behavior | Defined; not proof that product release gates pass |
 | `make run-local` | Start the four owned loopback services and require semantic readiness | Defined; same local-only boundary as `dev:*` |
 

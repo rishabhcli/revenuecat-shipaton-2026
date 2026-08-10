@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import copy
 import os
 import signal
@@ -302,6 +303,27 @@ class RepositoryStateTests(unittest.TestCase):
 
 
 class CleanCheckoutHarnessTests(unittest.TestCase):
+    def test_clean_timeout_accepts_declared_default_and_refuses_larger_values(self) -> None:
+        self.assertEqual(
+            verify_clean_checkout.positive_seconds(
+                str(verify_clean_checkout.DEFAULT_TIMEOUT_SECONDS)
+            ),
+            1_800,
+        )
+        with self.assertRaisesRegex(
+            argparse.ArgumentTypeError,
+            r"timeout must be between 1 and 1800 seconds",
+        ):
+            verify_clean_checkout.positive_seconds("1801")
+
+        makefile = (verify_clean_checkout.ROOT / "Makefile").read_text(encoding="utf-8")
+        workflow = (
+            verify_clean_checkout.ROOT / ".github" / "workflows" / "verify.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("CLEAN_VERIFY_TIMEOUT_SECONDS ?= 1800", makefile)
+        self.assertIn("    timeout-minutes: 40", workflow)
+        self.assertIn("        timeout-minutes: 35", workflow)
+
     def test_clean_worktree_uses_exact_repository_basename_inside_unique_container(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             parent = Path(temporary)
