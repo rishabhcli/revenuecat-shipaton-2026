@@ -190,7 +190,7 @@ The root `Makefile` now defines the repository's canonical, non-divergent comman
 | `make format` | Apply the deterministic Swift formatting contract | Defined; mutating helper, not a verification gate by itself |
 | `make typecheck` | Run the strict Swift 6 debug build | Defined; package-only scope |
 | `make verify-all` | Run the single canonical local verification contract, recreate the locked Node tree, hash source/index state, and inventory only allowlisted ignored outputs | Defined; a clean-checkout pass is not claimed here |
-| `make dev:preflight` / `make dev:up` / `make dev:health` / `make dev:down` | Manage only the loopback services in ports 4220-4229 and verify semantic readiness | Exercised successfully in this worktree on `127.0.0.1:4220-4223` |
+| `make dev:preflight` / `make dev:up` / `make dev:health` / `make dev:down` | Manage only the loopback services in ports 4220-4229 and verify semantic readiness under a 30-second total startup/readiness bound | Exercised successfully in this worktree on `127.0.0.1:4220-4223` |
 | `make test-integration` | Exercise all four real isolated loopback services | Defined; local harness scope only |
 | `make test-e2e` | Own and health-check all four local services, then browser-test the original-pattern outcome through allocated port 4222 without reusing a listener | Defined; local harness E2E only, not an iOS app E2E test |
 | `make eval` | Run the current typed compatibility-evidence policy oracle | Defined; no physical result or compatibility claim |

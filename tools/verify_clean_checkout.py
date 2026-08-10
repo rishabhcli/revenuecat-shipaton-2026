@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 REPOSITORY_NAME = "revenuecat-shipaton-2026"
 DEFAULT_TIMEOUT_SECONDS = 1_800
 TERMINATION_GRACE_SECONDS = 10
+DETACHED_SHUTDOWN_TIMEOUT_SECONDS = 50
 
 
 class CleanVerificationError(RuntimeError):
@@ -313,7 +314,9 @@ def remove_empty_worktree_container(container: Path, worktree: Path) -> str | No
 
 
 def stop_worktree_services(
-    worktree: Path, environment: dict[str, str], timeout_seconds: float = 30
+    worktree: Path,
+    environment: dict[str, str],
+    timeout_seconds: float = DETACHED_SHUTDOWN_TIMEOUT_SECONDS,
 ) -> str | None:
     controller = worktree / "scripts" / "devctl.py"
     if not controller.is_file():

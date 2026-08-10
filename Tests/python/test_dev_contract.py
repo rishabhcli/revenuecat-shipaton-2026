@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import http.client
 import json
@@ -19,10 +20,26 @@ from typing import Iterator
 from unittest import mock
 
 from scripts import dev_service, devctl
-from tools import bootstrap, probe_services
+from tools import bootstrap, probe_services, verify_clean_checkout
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+class FakeClock:
+    def __init__(self, initial: float = 0.0) -> None:
+        self.value = initial
+
+    def monotonic(self) -> float:
+        return self.value
+
+    def sleep(self, seconds: float) -> None:
+        if seconds < 0:
+            raise AssertionError("fake clock cannot move backwards")
+        self.value += seconds
+
+    def advance(self, seconds: float) -> None:
+        self.sleep(seconds)
 
 
 class RepositoryLocalTempCase(unittest.TestCase):
@@ -178,6 +195,39 @@ class PidOwnershipTests(RepositoryLocalTempCase):
         shutdown.assert_not_called()
         kill.assert_not_called()
 
+    def test_authenticated_shutdown_allows_loaded_exit_within_bounded_grace(self) -> None:
+        record = self.record()
+        clock = [0.0]
+
+        def advance(_seconds: float) -> None:
+            clock[0] += 1.0
+
+        def accept_shutdown(
+            _record: devctl.PidRecord, *, timeout_seconds: float
+        ) -> None:
+            self.assertEqual(timeout_seconds, 1.5)
+            clock[0] += 1.5
+
+        with (
+            mock.patch.object(
+                devctl, "request_owned_shutdown", side_effect=accept_shutdown
+            ) as request_shutdown,
+            mock.patch.object(
+                devctl,
+                "process_is_alive",
+                side_effect=lambda _pid: clock[0] < 9.0,
+            ),
+            mock.patch.object(devctl, "process_matches_record", return_value=True),
+            mock.patch.object(devctl, "remove_pid_record_if_same") as remove_record,
+            mock.patch.object(devctl.time, "monotonic", side_effect=lambda: clock[0]),
+            mock.patch.object(devctl.time, "sleep", side_effect=advance),
+        ):
+            devctl.stop_owned_record(self.root, record)
+
+        self.assertEqual(devctl.STOP_TIMEOUT_SECONDS, 10.0)
+        request_shutdown.assert_called_once_with(record, timeout_seconds=1.5)
+        remove_record.assert_called_once_with(self.root, record)
+
     def test_shutdown_endpoint_failure_never_falls_back_to_pid_signal(self) -> None:
         record = self.record()
         devctl.write_pid_record(self.root, record)
@@ -200,18 +250,31 @@ class PidOwnershipTests(RepositoryLocalTempCase):
     def test_pid_identity_change_after_shutdown_is_refused_without_signal(self) -> None:
         record = self.record()
         devctl.write_pid_record(self.root, record)
+        clock = FakeClock()
+
+        def accept_shutdown(
+            _record: devctl.PidRecord, *, timeout_seconds: float
+        ) -> None:
+            self.assertEqual(timeout_seconds, devctl.SHUTDOWN_REQUEST_TIMEOUT_SECONDS)
+            clock.advance(timeout_seconds)
+
         with (
             mock.patch.object(devctl, "process_is_alive", return_value=True),
             mock.patch.object(devctl, "process_matches_record", side_effect=[True, False]),
             mock.patch.object(devctl, "process_arguments", return_value=["/foreign/process"]),
-            mock.patch.object(devctl, "request_owned_shutdown") as shutdown,
-            mock.patch.object(devctl.time, "monotonic", side_effect=[0.0, 6.0]),
+            mock.patch.object(
+                devctl, "request_owned_shutdown", side_effect=accept_shutdown
+            ) as shutdown,
+            mock.patch.object(devctl.time, "monotonic", side_effect=clock.monotonic),
+            mock.patch.object(devctl.time, "sleep", side_effect=clock.sleep),
             mock.patch.object(devctl.os, "kill") as kill,
         ):
             with self.assertRaises(devctl.DevContractError) as raised:
                 devctl.stop_owned_record(self.root, record)
         self.assertEqual(raised.exception.code, "stop_pid_reused")
-        shutdown.assert_called_once_with(record)
+        shutdown.assert_called_once_with(
+            record, timeout_seconds=devctl.SHUTDOWN_REQUEST_TIMEOUT_SECONDS
+        )
         kill.assert_not_called()
         self.assertEqual(devctl.read_pid_record(self.root, record.service), record)
 
@@ -225,9 +288,35 @@ class PidOwnershipTests(RepositoryLocalTempCase):
             mock.patch.object(devctl.os, "kill") as kill,
         ):
             devctl.stop_owned_record(self.root, record)
-        shutdown.assert_called_once_with(record)
+        shutdown.assert_called_once_with(record, timeout_seconds=mock.ANY)
         kill.assert_not_called()
         self.assertIsNone(devctl.read_pid_record(self.root, record.service))
+
+    def test_retained_child_wait_uses_only_remaining_total_shutdown_budget(self) -> None:
+        record = self.record()
+        process = mock.Mock()
+        process.poll.return_value = None
+        clock = [0.0]
+
+        def accept_shutdown(
+            _record: devctl.PidRecord, *, timeout_seconds: float
+        ) -> None:
+            self.assertEqual(timeout_seconds, 1.5)
+            clock[0] += 1.5
+
+        spawned = devctl.SpawnedService(record=record, process=process)
+        with (
+            mock.patch.object(devctl, "process_matches_record", return_value=True),
+            mock.patch.object(
+                devctl, "request_owned_shutdown", side_effect=accept_shutdown
+            ),
+            mock.patch.object(devctl, "remove_pid_record_if_same") as remove_record,
+            mock.patch.object(devctl.time, "monotonic", side_effect=lambda: clock[0]),
+        ):
+            devctl.stop_spawned_service(self.root, spawned)
+
+        process.wait.assert_called_once_with(timeout=7.5)
+        remove_record.assert_called_once_with(self.root, record)
 
     def test_changed_pid_record_is_never_removed(self) -> None:
         original = self.record()
@@ -1335,6 +1424,488 @@ class LogRetentionTests(RepositoryLocalTempCase):
             dev_service.configure_service_logging(path, self.root, "evaluation")
 
 
+class LifecycleDeadlineTests(RepositoryLocalTempCase):
+    def configuration(self) -> devctl.PortConfiguration:
+        return devctl.PortConfiguration(
+            {"PORT_0": 4220, "PORT_1": 4221, "PORT_2": 4222, "PORT_3": 4223}
+        )
+
+    def record(self, service: devctl.ServiceDefinition) -> devctl.PidRecord:
+        return devctl.PidRecord(
+            schema_version=1,
+            repository=devctl.REPOSITORY_NAME,
+            repo_root=str(self.root.resolve()),
+            pid=5_000 + service.index,
+            service=service.name,
+            host=devctl.BIND_HOST,
+            port=4220 + service.index,
+            instance_token=(str(service.index + 1) * 32),
+            script=str(self.root / "scripts" / "dev_service.py"),
+            log_file=str(self.root / ".dev" / "logs" / f"{service.name}.log"),
+            started_at="2026-08-10T00:00:00.000Z",
+        )
+
+    def spawned(self, service: devctl.ServiceDefinition) -> devctl.SpawnedService:
+        return devctl.SpawnedService(
+            record=self.record(service),
+            process=SimpleNamespace(poll=lambda: None),  # type: ignore[arg-type]
+        )
+
+    def test_controller_lock_contention_exhausts_its_absolute_deadline(self) -> None:
+        clock = FakeClock()
+        deadline = devctl.OperationDeadline(
+            expires_at=0.2,
+            timeout_code="lock_timeout",
+            timeout_message="lock deadline exhausted",
+        )
+
+        def busy_lock(_descriptor: int, _operation: int) -> None:
+            raise BlockingIOError(errno.EAGAIN, "busy")
+
+        with (
+            mock.patch.object(devctl, "ensure_dev_directories"),
+            mock.patch.object(devctl.os, "open", return_value=91),
+            mock.patch.object(devctl.os, "close") as close_descriptor,
+            mock.patch.object(devctl.fcntl, "flock", side_effect=busy_lock),
+            mock.patch.object(devctl.time, "monotonic", side_effect=clock.monotonic),
+            mock.patch.object(devctl.time, "sleep", side_effect=clock.sleep),
+        ):
+            with self.assertRaises(devctl.DevContractError) as raised:
+                with devctl.controller_lock(self.root, deadline=deadline):
+                    self.fail("contended lock must not be yielded")
+
+        self.assertEqual(raised.exception.code, "lock_timeout")
+        self.assertLessEqual(clock.value, 0.2 + 1e-9)
+        close_descriptor.assert_called_once_with(91)
+
+    def test_controller_lock_contention_observes_e2e_cancellation(self) -> None:
+        clock = FakeClock()
+        cancellation = SimpleNamespace(is_set=lambda: clock.value >= 0.1)
+        deadline = devctl.OperationDeadline(
+            expires_at=30.0,
+            timeout_code="e2e_start_timeout",
+            timeout_message="startup timed out",
+            cancelled=cancellation,
+            cancellation_code="e2e_start_cancelled",
+            cancellation_message="startup cancelled",
+        )
+
+        def busy_lock(_descriptor: int, _operation: int) -> None:
+            raise BlockingIOError(errno.EAGAIN, "busy")
+
+        with (
+            mock.patch.object(devctl, "ensure_dev_directories"),
+            mock.patch.object(devctl.os, "open", return_value=92),
+            mock.patch.object(devctl.os, "close"),
+            mock.patch.object(devctl.fcntl, "flock", side_effect=busy_lock),
+            mock.patch.object(devctl.time, "monotonic", side_effect=clock.monotonic),
+            mock.patch.object(devctl.time, "sleep", side_effect=clock.sleep),
+        ):
+            with self.assertRaises(devctl.DevContractError) as raised:
+                with devctl.controller_lock(self.root, deadline=deadline):
+                    self.fail("cancelled lock must not be yielded")
+
+        self.assertEqual(raised.exception.code, "e2e_start_cancelled")
+        self.assertLessEqual(clock.value, 0.1 + 1e-9)
+
+    def test_listener_probe_uses_only_remaining_preflight_time(self) -> None:
+        clock = FakeClock()
+        observed_timeouts: list[float] = []
+        deadline = devctl.OperationDeadline(
+            expires_at=2.0,
+            timeout_code="up_timeout",
+            timeout_message="up deadline exhausted",
+        )
+
+        def slow_lsof(*_args: object, timeout: float, **_kwargs: object) -> object:
+            observed_timeouts.append(timeout)
+            clock.advance(timeout)
+            raise subprocess.TimeoutExpired(cmd="lsof", timeout=timeout)
+
+        with (
+            mock.patch.object(devctl, "lsof_executable", return_value="/usr/sbin/lsof"),
+            mock.patch.object(devctl.subprocess, "run", side_effect=slow_lsof),
+            mock.patch.object(devctl.time, "monotonic", side_effect=clock.monotonic),
+        ):
+            with self.assertRaises(devctl.DevContractError) as raised:
+                devctl.discover_listeners_for_ports(devctl.PORT_BLOCK, deadline=deadline)
+
+        self.assertEqual(raised.exception.code, "up_timeout")
+        self.assertEqual(observed_timeouts, [2.0])
+        self.assertEqual(clock.value, 2.0)
+
+    def test_process_inspection_uses_only_remaining_preflight_time(self) -> None:
+        clock = FakeClock()
+        observed_timeouts: list[float] = []
+        deadline = devctl.OperationDeadline(
+            expires_at=0.4,
+            timeout_code="up_timeout",
+            timeout_message="up deadline exhausted",
+        )
+
+        def slow_ps(*_args: object, timeout: float, **_kwargs: object) -> object:
+            observed_timeouts.append(timeout)
+            clock.advance(timeout)
+            raise subprocess.TimeoutExpired(cmd="ps", timeout=timeout)
+
+        with (
+            mock.patch.object(devctl.subprocess, "run", side_effect=slow_ps),
+            mock.patch.object(devctl.time, "monotonic", side_effect=clock.monotonic),
+        ):
+            with self.assertRaises(devctl.DevContractError) as raised:
+                devctl.process_arguments(9_999_999, deadline=deadline)
+
+        self.assertEqual(raised.exception.code, "up_timeout")
+        self.assertEqual(observed_timeouts, [0.4])
+        self.assertEqual(clock.value, 0.4)
+
+    def test_readiness_http_uses_only_remaining_command_time(self) -> None:
+        clock = FakeClock()
+        observed_timeouts: list[float] = []
+        record = self.record(devctl.SERVICE_BY_NAME["test-patterns"])
+        deadline = devctl.OperationDeadline(
+            expires_at=0.25,
+            timeout_code="health_timeout",
+            timeout_message="health deadline exhausted",
+        )
+
+        def slow_request(_request: object, timeout: float) -> object:
+            observed_timeouts.append(timeout)
+            clock.advance(timeout)
+            raise TimeoutError("slow readiness")
+
+        with (
+            mock.patch.object(devctl, "open_loopback_request", side_effect=slow_request),
+            mock.patch.object(devctl.time, "monotonic", side_effect=clock.monotonic),
+        ):
+            with self.assertRaises(devctl.DevContractError) as raised:
+                devctl.readiness_probe(record, deadline=deadline)
+
+        self.assertEqual(raised.exception.code, "health_timeout")
+        self.assertEqual(observed_timeouts, [0.25])
+        self.assertEqual(clock.value, 0.25)
+
+    def test_preflight_refuses_when_a_local_phase_consumes_the_deadline(self) -> None:
+        self.write_ports()
+        clock = FakeClock()
+        deadline = devctl.OperationDeadline(
+            expires_at=3.0,
+            timeout_code="up_timeout",
+            timeout_message="up deadline exhausted",
+        )
+
+        def slow_ignore(
+            _root: Path, *, deadline: devctl.OperationDeadline | None = None
+        ) -> bool:
+            self.assertIsNotNone(deadline)
+            clock.advance(3.0)
+            return True
+
+        with (
+            mock.patch.object(devctl, "dev_is_git_ignored", side_effect=slow_ignore),
+            mock.patch.object(devctl, "discover_listeners_for_ports") as listeners,
+            mock.patch.object(devctl.time, "monotonic", side_effect=clock.monotonic),
+        ):
+            with self.assertRaises(devctl.DevContractError) as raised:
+                devctl.preflight(self.root, deadline=deadline)
+
+        self.assertEqual(raised.exception.code, "up_timeout")
+        listeners.assert_not_called()
+        self.assertEqual(clock.value, 3.0)
+
+    def test_command_up_deadline_includes_lock_preflight_and_spawn(self) -> None:
+        clock = FakeClock(100.0)
+        state = devctl.PreflightState(self.configuration(), {})
+        observed_deadlines: list[float] = []
+
+        @contextmanager
+        def slow_lock(
+            _root: Path, *, deadline: devctl.OperationDeadline | None = None
+        ) -> Iterator[None]:
+            self.assertIsNotNone(deadline)
+            observed_deadlines.append(deadline.expires_at)  # type: ignore[union-attr]
+            clock.advance(5.0)
+            yield
+
+        def slow_preflight(
+            _root: Path, *, deadline: devctl.OperationDeadline | None = None
+        ) -> devctl.PreflightState:
+            self.assertIsNotNone(deadline)
+            clock.advance(20.0)
+            return state
+
+        def slow_spawn(
+            _root: Path, service: devctl.ServiceDefinition, _port: int
+        ) -> devctl.SpawnedService:
+            clock.advance(6.0)
+            return self.spawned(service)
+
+        with (
+            mock.patch.object(devctl, "controller_lock", side_effect=slow_lock),
+            mock.patch.object(devctl, "preflight", side_effect=slow_preflight),
+            mock.patch.object(devctl, "read_pid_record", return_value=None),
+            mock.patch.object(devctl, "spawn_service", side_effect=slow_spawn) as spawn,
+            mock.patch.object(devctl, "wait_for_health") as wait_for_health,
+            mock.patch.object(devctl, "stop_spawned_service") as cleanup,
+            mock.patch.object(devctl.time, "monotonic", side_effect=clock.monotonic),
+        ):
+            with self.assertRaises(devctl.DevContractError) as raised:
+                devctl.command_up(self.root, 30.0)
+
+        self.assertEqual(raised.exception.code, "up_timeout")
+        self.assertEqual(observed_deadlines, [130.0])
+        self.assertEqual(spawn.call_count, 1)
+        wait_for_health.assert_not_called()
+        cleanup.assert_called_once_with(
+            self.root, mock.ANY, parent_deadline=mock.ANY
+        )
+
+    def test_command_health_deadline_begins_before_configuration_load(self) -> None:
+        clock = FakeClock()
+
+        def slow_configuration(_path: Path) -> devctl.PortConfiguration:
+            clock.advance(31.0)
+            return self.configuration()
+
+        with (
+            mock.patch.object(devctl, "parse_ports_file", side_effect=slow_configuration),
+            mock.patch.object(devctl, "wait_for_health") as wait_for_health,
+            mock.patch.object(devctl.time, "monotonic", side_effect=clock.monotonic),
+        ):
+            with self.assertRaises(devctl.DevContractError) as raised:
+                devctl.command_health(self.root, 30.0)
+
+        self.assertEqual(raised.exception.code, "health_timeout")
+        wait_for_health.assert_not_called()
+
+    def test_stop_deadline_starts_before_process_ownership_inspection(self) -> None:
+        clock = FakeClock()
+        record = self.record(devctl.SERVICE_BY_NAME["evaluation"])
+        observed_timeouts: list[float] = []
+
+        def slow_alive(_pid: int) -> bool:
+            clock.advance(9.5)
+            return True
+
+        def slow_ps(*_args: object, timeout: float, **_kwargs: object) -> object:
+            observed_timeouts.append(timeout)
+            clock.advance(timeout)
+            raise subprocess.TimeoutExpired(cmd="ps", timeout=timeout)
+
+        with (
+            mock.patch.object(devctl, "process_is_alive", side_effect=slow_alive),
+            mock.patch.object(devctl.subprocess, "run", side_effect=slow_ps),
+            mock.patch.object(devctl, "request_owned_shutdown") as shutdown,
+            mock.patch.object(devctl, "remove_pid_record_if_same") as remove_record,
+            mock.patch.object(devctl.os, "kill") as kill,
+            mock.patch.object(devctl.time, "monotonic", side_effect=clock.monotonic),
+        ):
+            with self.assertRaises(devctl.DevContractError) as raised:
+                devctl.stop_owned_record(self.root, record)
+
+        self.assertEqual(raised.exception.code, "stop_timeout")
+        self.assertAlmostEqual(observed_timeouts[0], 0.5)
+        self.assertLessEqual(clock.value, devctl.STOP_TIMEOUT_SECONDS + 1e-9)
+        shutdown.assert_not_called()
+        remove_record.assert_not_called()
+        kill.assert_not_called()
+
+    def test_down_shared_50_second_deadline_caps_lock_and_every_stop(self) -> None:
+        clock = FakeClock()
+        records = {service.name: self.record(service) for service in devctl.SERVICES}
+        observed_budgets: list[float] = []
+        observed_deadlines: list[float] = []
+
+        @contextmanager
+        def slow_lock(
+            _root: Path, *, deadline: devctl.OperationDeadline | None = None
+        ) -> Iterator[None]:
+            self.assertIsNotNone(deadline)
+            observed_deadlines.append(deadline.expires_at)  # type: ignore[union-attr]
+            clock.advance(15.0)
+            yield
+
+        def bounded_stop(
+            _root: Path,
+            _record: devctl.PidRecord,
+            *,
+            parent_deadline: devctl.OperationDeadline | None = None,
+        ) -> None:
+            self.assertIsNotNone(parent_deadline)
+            remaining = parent_deadline.expires_at - clock.value  # type: ignore[union-attr]
+            budget = min(devctl.STOP_TIMEOUT_SECONDS, remaining)
+            observed_budgets.append(budget)
+            clock.advance(max(0.0, budget - 0.01))
+
+        with (
+            mock.patch.object(devctl, "controller_lock", side_effect=slow_lock),
+            mock.patch.object(
+                devctl,
+                "read_pid_record",
+                side_effect=lambda _root, name: records[name],
+            ),
+            mock.patch.object(devctl, "stop_owned_record", side_effect=bounded_stop),
+            mock.patch.object(devctl.time, "monotonic", side_effect=clock.monotonic),
+        ):
+            devctl.command_down(self.root, devctl.DEFAULT_DOWN_TIMEOUT_SECONDS)
+
+        self.assertEqual(observed_deadlines, [devctl.DEFAULT_DOWN_TIMEOUT_SECONDS])
+        self.assertEqual(observed_budgets[:3], [10.0, 10.0, 10.0])
+        self.assertAlmostEqual(observed_budgets[3], 5.03)
+        self.assertLess(clock.value, devctl.DEFAULT_DOWN_TIMEOUT_SECONDS)
+
+    def test_e2e_cleanup_envelope_includes_lock_and_ignores_start_cancellation(self) -> None:
+        clock = FakeClock()
+        state = devctl.PreflightState(self.configuration(), {})
+        lock_calls: list[devctl.OperationDeadline] = []
+        cleanup_budgets: list[float] = []
+
+        class StopEvent:
+            stopped = False
+
+            def is_set(self) -> bool:
+                return self.stopped
+
+            def wait(self, _delay: float) -> bool:
+                self.stopped = True
+                return True
+
+            def set(self) -> None:
+                self.stopped = True
+
+        stop_event = StopEvent()
+
+        @contextmanager
+        def bounded_lock(
+            _root: Path, *, deadline: devctl.OperationDeadline | None = None
+        ) -> Iterator[None]:
+            self.assertIsNotNone(deadline)
+            lock_calls.append(deadline)  # type: ignore[arg-type]
+            if len(lock_calls) == 2:
+                self.assertIsNone(deadline.cancelled)  # type: ignore[union-attr]
+                clock.advance(6.0)
+            yield
+
+        def spawn(
+            _root: Path, service: devctl.ServiceDefinition, _port: int
+        ) -> devctl.SpawnedService:
+            return self.spawned(service)
+
+        def healthy(
+            _record: devctl.PidRecord,
+            _timeout_seconds: float,
+            *,
+            cancelled: object | None = None,
+            deadline: devctl.OperationDeadline | None = None,
+        ) -> None:
+            self.assertIs(cancelled, stop_event)
+            self.assertIsNotNone(deadline)
+
+        def bounded_stop(
+            _root: Path,
+            _spawned: devctl.SpawnedService,
+            *,
+            parent_deadline: devctl.OperationDeadline | None = None,
+        ) -> None:
+            self.assertIsNotNone(parent_deadline)
+            self.assertIsNone(parent_deadline.cancelled)  # type: ignore[union-attr]
+            remaining = parent_deadline.expires_at - clock.value  # type: ignore[union-attr]
+            budget = min(devctl.STOP_TIMEOUT_SECONDS, remaining)
+            cleanup_budgets.append(budget)
+            clock.advance(max(0.0, budget - 0.01))
+
+        with (
+            mock.patch.object(devctl, "controller_lock", side_effect=bounded_lock),
+            mock.patch.object(devctl, "preflight", return_value=state),
+            mock.patch.object(devctl, "spawn_service", side_effect=spawn),
+            mock.patch.object(devctl, "wait_for_record_health", side_effect=healthy),
+            mock.patch.object(devctl, "stop_spawned_service", side_effect=bounded_stop),
+            mock.patch.object(devctl.threading, "Event", return_value=stop_event),
+            mock.patch.object(devctl.signal, "getsignal", return_value=0),
+            mock.patch.object(devctl.signal, "signal"),
+            mock.patch.object(devctl.time, "monotonic", side_effect=clock.monotonic),
+        ):
+            devctl.command_e2e_server(self.root, 30.0)
+
+        self.assertEqual(len(lock_calls), 2)
+        self.assertEqual(cleanup_budgets[:3], [10.0, 10.0, 10.0])
+        self.assertAlmostEqual(cleanup_budgets[3], 9.03)
+        self.assertLess(clock.value, devctl.E2E_CLEANUP_TIMEOUT_SECONDS)
+
+
+class E2EStartupDeadlineTests(RepositoryLocalTempCase):
+    def test_e2e_services_share_one_decreasing_total_startup_budget(self) -> None:
+        configuration = devctl.PortConfiguration(
+            {"PORT_0": 4220, "PORT_1": 4221, "PORT_2": 4222, "PORT_3": 4223}
+        )
+        state = devctl.PreflightState(configuration=configuration, active_records={})
+        clock = [100.0]
+        observed_budgets: list[float] = []
+        spawn_order: list[str] = []
+
+        @contextmanager
+        def unlocked(
+            _root: Path, *, deadline: devctl.OperationDeadline | None = None
+        ) -> Iterator[None]:
+            self.assertIsNotNone(deadline)
+            yield
+
+        def spawn(
+            root: Path, service: devctl.ServiceDefinition, port: int
+        ) -> devctl.SpawnedService:
+            spawn_order.append(service.name)
+            record = devctl.PidRecord(
+                schema_version=1,
+                repository=devctl.REPOSITORY_NAME,
+                repo_root=str(root.resolve()),
+                pid=5_000 + service.index,
+                service=service.name,
+                host=devctl.BIND_HOST,
+                port=port,
+                instance_token="a" * 32,
+                script=str(root / "scripts" / "dev_service.py"),
+                log_file=str(root / ".dev" / "logs" / f"{service.name}.log"),
+                started_at="2026-08-10T00:00:00.000Z",
+            )
+            return devctl.SpawnedService(
+                record=record,
+                process=SimpleNamespace(poll=lambda: None),  # type: ignore[arg-type]
+            )
+
+        def observe_health(
+            _record: devctl.PidRecord,
+            timeout_seconds: float,
+            *,
+            cancelled: object | None = None,
+            deadline: devctl.OperationDeadline | None = None,
+        ) -> None:
+            self.assertIsNotNone(cancelled)
+            self.assertIsNotNone(deadline)
+            observed_budgets.append(timeout_seconds)
+            clock[0] += 6.0
+
+        stop_requested = SimpleNamespace(is_set=lambda: False, wait=lambda _delay: True)
+        with (
+            mock.patch.object(devctl, "controller_lock", side_effect=unlocked),
+            mock.patch.object(devctl, "preflight", return_value=state),
+            mock.patch.object(devctl, "spawn_service", side_effect=spawn),
+            mock.patch.object(devctl, "wait_for_record_health", side_effect=observe_health),
+            mock.patch.object(devctl, "stop_spawned_service") as stop_service,
+            mock.patch.object(devctl.time, "monotonic", side_effect=lambda: clock[0]),
+            mock.patch.object(devctl.threading, "Event", return_value=stop_requested),
+            mock.patch.object(devctl.signal, "getsignal", return_value=0),
+            mock.patch.object(devctl.signal, "signal"),
+        ):
+            devctl.command_e2e_server(self.root, 30.0)
+
+        self.assertEqual(
+            spawn_order,
+            ["evaluation", "revenuecat-webhook", "artifacts", "test-patterns"],
+        )
+        self.assertEqual(observed_budgets, [30.0, 24.0, 18.0, 12.0])
+        self.assertEqual(stop_service.call_count, len(devctl.SERVICES))
+
+
 class CommittedSurfaceTests(unittest.TestCase):
     def test_gitignore_contains_dev_directory_rule(self) -> None:
         lines = [line for line in (REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines() if line]
@@ -1348,17 +1919,35 @@ class CommittedSurfaceTests(unittest.TestCase):
         self.assertIn("browserName: 'chromium'", config)
         self.assertIn("./.dev/pw-profile/storage-state.json", config)
         self.assertIn("python3 scripts/devctl.py e2e-server", config)
+        self.assertIn("python3 scripts/devctl.py e2e-server --timeout 30", config)
         self.assertIn("reuseExistingServer: false", config)
         self.assertIn("gracefulShutdown: { signal: 'SIGTERM'", config)
         self.assertIn("timeout: 45_000", config)
+        self.assertEqual(devctl.DEFAULT_HEALTH_TIMEOUT_SECONDS, 30.0)
+        self.assertEqual(devctl.STOP_TIMEOUT_SECONDS, 10.0)
+        for command in ("up", "health", "e2e-server"):
+            self.assertEqual(devctl.parse_arguments([command]).timeout, 30.0)
         self.assertGreaterEqual(
             45_000,
             int((len(devctl.SERVICES) * devctl.STOP_TIMEOUT_SECONDS + 5) * 1_000),
+        )
+        self.assertGreater(
+            verify_clean_checkout.DETACHED_SHUTDOWN_TIMEOUT_SECONDS,
+            len(devctl.SERVICES) * devctl.STOP_TIMEOUT_SECONDS,
         )
         self.assertNotIn("TEST_WORKER_INDEX", config)
         self.assertNotIn("scripts/dev_service.py", config)
         self.assertNotIn("reuseExistingServer: true", config)
         makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+        self.assertIn("DEV_HEALTH_TIMEOUT_SECONDS ?= 30", makefile)
+        self.assertEqual(
+            makefile.count('--timeout "$(DEV_HEALTH_TIMEOUT_SECONDS)"'),
+            6,
+        )
+        self.assertGreater(
+            45_000,
+            int(devctl.DEFAULT_HEALTH_TIMEOUT_SECONDS * 1_000),
+        )
         self.assertIn("override PLAYWRIGHT_BROWSERS_PATH := $(DEV_CACHE_DIR)/ms-playwright", makefile)
         self.assertIn("playwright install chromium", makefile)
 

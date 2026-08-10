@@ -14,7 +14,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: 'python3 scripts/devctl.py e2e-server --timeout 10',
+    command: 'python3 scripts/devctl.py e2e-server --timeout 30',
     url: `${testHarnessURL}/health/ready`,
     reuseExistingServer: false,
     gracefulShutdown: { signal: 'SIGTERM', timeout: 45_000 },

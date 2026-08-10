@@ -22,6 +22,7 @@ export npm_config_cache
 export TMPDIR
 export PLAYWRIGHT_BROWSERS_PATH
 CLEAN_VERIFY_TIMEOUT_SECONDS ?= 1800
+DEV_HEALTH_TIMEOUT_SECONDS ?= 30
 
 SWIFT := xcrun swift
 SWIFT_FORMAT := xcrun swift-format
@@ -109,10 +110,10 @@ dev\:preflight: workspace-init
 	@$(PYTHON) scripts/devctl.py preflight
 
 dev\:up: workspace-init
-	@$(PYTHON) scripts/devctl.py up
+	@$(PYTHON) scripts/devctl.py up --timeout "$(DEV_HEALTH_TIMEOUT_SECONDS)"
 
 dev\:health: workspace-init
-	@$(PYTHON) scripts/devctl.py health
+	@$(PYTHON) scripts/devctl.py health --timeout "$(DEV_HEALTH_TIMEOUT_SECONDS)"
 
 dev\:down: workspace-init
 	@$(PYTHON) scripts/devctl.py down
@@ -122,8 +123,8 @@ test-integration: workspace-init
 	  $(PYTHON) scripts/devctl.py down >/dev/null; \
 	  trap '$(PYTHON) scripts/devctl.py down >/dev/null || true' EXIT; \
 	  $(PYTHON) scripts/devctl.py preflight; \
-	  $(PYTHON) scripts/devctl.py up; \
-	  $(PYTHON) scripts/devctl.py health; \
+	  $(PYTHON) scripts/devctl.py up --timeout "$(DEV_HEALTH_TIMEOUT_SECONDS)"; \
+	  $(PYTHON) scripts/devctl.py health --timeout "$(DEV_HEALTH_TIMEOUT_SECONDS)"; \
 	  $(PYTHON) tools/probe_services.py
 
 test-e2e: workspace-init install-e2e-browser
@@ -158,8 +159,8 @@ verify-all: workspace-init
 	  trap '$(PYTHON) scripts/devctl.py down >/dev/null || true' EXIT; \
 	  $(MAKE) --no-print-directory bootstrap; \
 	  $(PYTHON) scripts/devctl.py preflight; \
-	  $(PYTHON) scripts/devctl.py up; \
-	  $(PYTHON) scripts/devctl.py health; \
+	  $(PYTHON) scripts/devctl.py up --timeout "$(DEV_HEALTH_TIMEOUT_SECONDS)"; \
+	  $(PYTHON) scripts/devctl.py health --timeout "$(DEV_HEALTH_TIMEOUT_SECONDS)"; \
 	  $(MAKE) --no-print-directory format-check; \
 	  $(MAKE) --no-print-directory lint; \
 	  $(MAKE) --no-print-directory typecheck; \

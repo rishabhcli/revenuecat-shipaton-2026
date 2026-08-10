@@ -35,8 +35,17 @@ BIND_HOST: Final = "127.0.0.1"
 PORT_MIN: Final = 4220
 PORT_MAX: Final = 4229
 PORT_BLOCK: Final = tuple(range(PORT_MIN, PORT_MAX + 1))
-DEFAULT_HEALTH_TIMEOUT_SECONDS: Final = 10.0
-STOP_TIMEOUT_SECONDS: Final = 5.0
+DEFAULT_HEALTH_TIMEOUT_SECONDS: Final = 30.0
+DEFAULT_DOWN_TIMEOUT_SECONDS: Final = 50.0
+STOP_TIMEOUT_SECONDS: Final = 10.0
+E2E_CLEANUP_TIMEOUT_SECONDS: Final = 45.0
+CONTROLLER_LOCK_POLL_SECONDS: Final = 0.05
+GIT_IGNORE_CHECK_TIMEOUT_SECONDS: Final = 2.0
+PROCESS_INSPECTION_TIMEOUT_SECONDS: Final = 1.0
+LISTENER_INSPECTION_TIMEOUT_SECONDS: Final = 10.0
+READINESS_REQUEST_TIMEOUT_SECONDS: Final = 0.75
+SHUTDOWN_REQUEST_TIMEOUT_SECONDS: Final = 1.5
+STOP_FINAL_IDENTITY_RESERVE_SECONDS: Final = 1.0
 MAX_PID_RECORD_BYTES: Final = 16_384
 MAX_HEALTH_BYTES: Final = 65_536
 DEVCTL_TOKEN_HEADER: Final = "X-Devctl-Instance-Token"
@@ -70,6 +79,61 @@ class DevContractError(RuntimeError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+@dataclass(frozen=True)
+class OperationDeadline:
+    """One monotonic absolute deadline shared by every phase of an operation."""
+
+    expires_at: float
+    timeout_code: str
+    timeout_message: str
+    cancelled: Any | None = None
+    cancellation_code: str = "operation_cancelled"
+    cancellation_message: str = "operation was cancelled"
+
+    def remaining(self, maximum_seconds: float | None = None) -> float:
+        if self.cancelled is not None and self.cancelled.is_set():
+            raise DevContractError(self.cancellation_code, self.cancellation_message)
+        remaining = self.expires_at - time.monotonic()
+        if remaining <= 0:
+            raise DevContractError(self.timeout_code, self.timeout_message)
+        if maximum_seconds is not None:
+            return min(remaining, maximum_seconds)
+        return remaining
+
+    def check(self) -> None:
+        self.remaining()
+
+
+def _deadline_after(
+    timeout_seconds: float,
+    *,
+    timeout_code: str,
+    timeout_message: str,
+    cancelled: Any | None = None,
+    cancellation_code: str = "operation_cancelled",
+    cancellation_message: str = "operation was cancelled",
+) -> OperationDeadline:
+    return OperationDeadline(
+        expires_at=time.monotonic() + timeout_seconds,
+        timeout_code=timeout_code,
+        timeout_message=timeout_message,
+        cancelled=cancelled,
+        cancellation_code=cancellation_code,
+        cancellation_message=cancellation_message,
+    )
+
+
+def _check_deadline(deadline: OperationDeadline | None) -> None:
+    if deadline is not None:
+        deadline.check()
+
+
+def _bounded_timeout(deadline: OperationDeadline | None, maximum_seconds: float) -> float:
+    if deadline is None:
+        return maximum_seconds
+    return deadline.remaining(maximum_seconds)
 
 
 @dataclass(frozen=True)
@@ -232,7 +296,10 @@ def ensure_dev_directories(root: Path) -> None:
         )
 
 
-def dev_is_git_ignored(root: Path) -> bool:
+def dev_is_git_ignored(
+    root: Path, *, deadline: OperationDeadline | None = None
+) -> bool:
+    timeout_seconds = _bounded_timeout(deadline, GIT_IGNORE_CHECK_TIMEOUT_SECONDS)
     try:
         result = subprocess.run(
             ["git", "check-ignore", "--quiet", "--", ".dev/preflight-probe"],
@@ -240,10 +307,16 @@ def dev_is_git_ignored(root: Path) -> bool:
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
-            timeout=2.0,
+            timeout=timeout_seconds,
         )
+    except subprocess.TimeoutExpired as error:
+        _check_deadline(deadline)
+        raise DevContractError(
+            "git_ignore_check_failed", "git check-ignore exceeded its bounded inspection time"
+        ) from error
     except (OSError, subprocess.SubprocessError) as error:
         raise DevContractError("git_ignore_check_failed", "could not verify .dev/ with git check-ignore") from error
+    _check_deadline(deadline)
     return result.returncode == 0
 
 
@@ -396,24 +469,33 @@ def process_is_alive(pid: int) -> bool:
     return True
 
 
-def process_arguments(pid: int) -> list[str] | None:
+def process_arguments(
+    pid: int, *, deadline: OperationDeadline | None = None
+) -> list[str] | None:
+    _check_deadline(deadline)
     proc_path = Path("/proc") / str(pid) / "cmdline"
     if proc_path.is_file():
         try:
             content = proc_path.read_bytes()
+            _check_deadline(deadline)
             return [item.decode("utf-8", errors="strict") for item in content.split(b"\0") if item]
         except (OSError, UnicodeDecodeError):
             return None
+    timeout_seconds = _bounded_timeout(deadline, PROCESS_INSPECTION_TIMEOUT_SECONDS)
     try:
         result = subprocess.run(
             ["ps", "-ww", "-p", str(pid), "-o", "command="],
             check=False,
             capture_output=True,
             text=True,
-            timeout=1.0,
+            timeout=timeout_seconds,
         )
+    except subprocess.TimeoutExpired:
+        _check_deadline(deadline)
+        return None
     except (OSError, subprocess.SubprocessError):
         return None
+    _check_deadline(deadline)
     if result.returncode != 0 or not result.stdout.strip():
         return None
     try:
@@ -432,11 +514,17 @@ def _option(arguments: Sequence[str], name: str) -> str | None:
     return None
 
 
-def process_matches_record(record: PidRecord, arguments: Sequence[str] | None = None) -> bool:
-    args = process_arguments(record.pid) if arguments is None else list(arguments)
+def process_matches_record(
+    record: PidRecord,
+    arguments: Sequence[str] | None = None,
+    *,
+    deadline: OperationDeadline | None = None,
+) -> bool:
+    _check_deadline(deadline)
+    args = process_arguments(record.pid, deadline=deadline) if arguments is None else list(arguments)
     if not args or record.script not in args:
         return False
-    return (
+    matches = (
         _option(args, "--service") == record.service
         and _option(args, "--host") == record.host
         and _option(args, "--port") == str(record.port)
@@ -444,6 +532,8 @@ def process_matches_record(record: PidRecord, arguments: Sequence[str] | None = 
         and _option(args, "--instance-token") == record.instance_token
         and _option(args, "--log-file") == record.log_file
     )
+    _check_deadline(deadline)
+    return matches
 
 
 def lsof_executable() -> str | None:
@@ -456,7 +546,9 @@ def lsof_executable() -> str | None:
     return str(fallback) if fallback.is_file() else None
 
 
-def discover_listeners_for_ports(ports: Sequence[int]) -> dict[int, list[Listener]]:
+def discover_listeners_for_ports(
+    ports: Sequence[int], *, deadline: OperationDeadline | None = None
+) -> dict[int, list[Listener]]:
     """Identify every TCP listener on block ports in one bounded lsof snapshot."""
 
     inspected = tuple(ports)
@@ -474,16 +566,23 @@ def discover_listeners_for_ports(ports: Sequence[int]) -> dict[int, list[Listene
         if len(inspected) == 1
         else f"{min(inspected)}-{max(inspected)}"
     )
+    timeout_seconds = _bounded_timeout(deadline, LISTENER_INSPECTION_TIMEOUT_SECONDS)
     try:
         result = subprocess.run(
             [lsof, "-nP", "-a", f"-iTCP:{port_selector}", "-sTCP:LISTEN", "-Fpctn"],
             check=False,
             capture_output=True,
             text=True,
-            timeout=10.0,
+            timeout=timeout_seconds,
         )
+    except subprocess.TimeoutExpired as error:
+        _check_deadline(deadline)
+        raise DevContractError(
+            "lsof_failed", f"listener inspection exceeded its bound on ports {port_selector}"
+        ) from error
     except (OSError, subprocess.SubprocessError) as error:
         raise DevContractError("lsof_failed", f"could not identify listeners on ports {port_selector}") from error
+    _check_deadline(deadline)
     if result.returncode not in (0, 1):
         raise DevContractError("lsof_failed", f"lsof failed while inspecting ports {port_selector}")
     current_pid: int | None = None
@@ -504,51 +603,72 @@ def discover_listeners_for_ports(ports: Sequence[int]) -> dict[int, list[Listene
             port = int(match.group(1))
             if port in discovered:
                 discovered[port].append(Listener(current_pid, current_command, value[:256]))
+    _check_deadline(deadline)
     return discovered
 
 
-def discover_listeners(port: int) -> list[Listener]:
+def discover_listeners(
+    port: int, *, deadline: OperationDeadline | None = None
+) -> list[Listener]:
     """Identify every TCP listener on one block port."""
 
-    return discover_listeners_for_ports((port,))[port]
+    return discover_listeners_for_ports((port,), deadline=deadline)[port]
 
 
-def _record_map(root: Path) -> dict[str, PidRecord]:
+def _record_map(
+    root: Path, *, deadline: OperationDeadline | None = None
+) -> dict[str, PidRecord]:
+    _check_deadline(deadline)
     pids_dir = root / ".dev" / "pids"
     expected_names = {f"{service.name}.json" for service in SERVICES}
     for entry in pids_dir.iterdir():
+        _check_deadline(deadline)
         if entry.name.startswith("."):
             continue
         if entry.name not in expected_names:
             raise DevContractError("unknown_pid_record", f"unexpected file in .dev/pids: {entry.name}")
     records: dict[str, PidRecord] = {}
     for service in SERVICES:
+        _check_deadline(deadline)
         record = read_pid_record(root, service.name)
+        _check_deadline(deadline)
         if record is None:
             continue
+        _check_deadline(deadline)
         if not process_is_alive(record.pid):
+            _check_deadline(deadline)
             remove_pid_record_if_same(root, record)
+            _check_deadline(deadline)
             continue
-        if not process_matches_record(record):
+        _check_deadline(deadline)
+        if not process_matches_record(record, deadline=deadline):
             raise DevContractError(
                 "pid_ownership_unproven",
                 f"PID {record.pid} from {service.name} record does not match its unique instance token; refusing it",
             )
         records[service.name] = record
+    _check_deadline(deadline)
     return records
 
 
-def preflight(root: Path) -> PreflightState:
+def preflight(
+    root: Path, *, deadline: OperationDeadline | None = None
+) -> PreflightState:
+    _check_deadline(deadline)
     if root.resolve().name != REPOSITORY_NAME:
         raise DevContractError("repository_mismatch", f"devctl must run in the {REPOSITORY_NAME} checkout")
+    _check_deadline(deadline)
     configuration = parse_ports_file(root / "ports.env")
+    _check_deadline(deadline)
     ensure_dev_directories(root)
-    if not dev_is_git_ignored(root):
+    _check_deadline(deadline)
+    if not dev_is_git_ignored(root, deadline=deadline):
         raise DevContractError("dev_not_ignored", ".dev/ is not ignored by Git")
-    records = _record_map(root)
+    _check_deadline(deadline)
+    records = _record_map(root, deadline=deadline)
     records_by_pid = {record.pid: record for record in records.values()}
     foreign: list[str] = []
-    listeners_by_port = discover_listeners_for_ports(PORT_BLOCK)
+    listeners_by_port = discover_listeners_for_ports(PORT_BLOCK, deadline=deadline)
     for port in PORT_BLOCK:
         for listener in listeners_by_port[port]:
             record = records_by_pid.get(listener.pid) if listener.pid is not None else None
@@ -562,12 +682,17 @@ def preflight(root: Path) -> PreflightState:
             "foreign_port_holder",
             "foreign listener(s) detected; no process was killed: " + "; ".join(foreign),
         )
+    _check_deadline(deadline)
     return PreflightState(configuration, records)
 
 
 @contextlib.contextmanager
-def controller_lock(root: Path) -> Iterator[None]:
+def controller_lock(
+    root: Path, *, deadline: OperationDeadline | None = None
+) -> Iterator[None]:
+    _check_deadline(deadline)
     ensure_dev_directories(root)
+    _check_deadline(deadline)
     lock_path = root / ".dev" / "devctl.lock"
     if lock_path.is_symlink():
         raise DevContractError("controller_lock_symlink", "refusing symlink controller lock")
@@ -575,13 +700,30 @@ def controller_lock(root: Path) -> Iterator[None]:
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     descriptor = os.open(lock_path, flags, 0o600)
+    acquired = False
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        while not acquired:
+            _check_deadline(deadline)
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+            except OSError as error:
+                if error.errno not in {errno.EACCES, errno.EAGAIN}:
+                    raise DevContractError(
+                        "controller_lock_failed", "could not acquire the devctl controller lock"
+                    ) from error
+                sleep_seconds = CONTROLLER_LOCK_POLL_SECONDS
+                if deadline is not None:
+                    sleep_seconds = min(sleep_seconds, deadline.remaining())
+                time.sleep(sleep_seconds)
+        _check_deadline(deadline)
         os.ftruncate(descriptor, 0)
         os.write(descriptor, f"{os.getpid()}\n".encode("ascii"))
+        _check_deadline(deadline)
         yield
     finally:
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        if acquired:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
         os.close(descriptor)
 
 
@@ -609,11 +751,21 @@ def sanitized_service_environment(root: Path) -> dict[str, str]:
 def _terminate_spawned_child(process: subprocess.Popen[bytes]) -> None:
     """Terminate only a still-owned Popen child; never signal a record-derived PID."""
 
+    deadline = _deadline_after(
+        STOP_TIMEOUT_SECONDS,
+        timeout_code="spawn_cleanup_timeout",
+        timeout_message=(
+            f"newly spawned child pid {process.pid} did not exit within its total cleanup deadline; "
+            "no unchecked PID escalation was sent"
+        ),
+    )
+    deadline.check()
     if process.poll() is not None:
         return
+    deadline.check()
     process.terminate()
     try:
-        process.wait(timeout=STOP_TIMEOUT_SECONDS)
+        process.wait(timeout=deadline.remaining())
     except subprocess.TimeoutExpired as error:
         raise DevContractError(
             "spawn_cleanup_timeout",
@@ -712,14 +864,17 @@ def open_loopback_request(request: urlrequest.Request, timeout: float) -> Any:
     return response
 
 
-def readiness_probe(record: PidRecord) -> tuple[bool, str]:
+def readiness_probe(
+    record: PidRecord, *, deadline: OperationDeadline | None = None
+) -> tuple[bool, str]:
+    request_timeout = _bounded_timeout(deadline, READINESS_REQUEST_TIMEOUT_SECONDS)
     request = urlrequest.Request(
         f"http://{BIND_HOST}:{record.port}/health/ready",
         headers={"Accept": "application/json", "Connection": "close"},
         method="GET",
     )
     try:
-        with open_loopback_request(request, timeout=0.75) as response:
+        with open_loopback_request(request, timeout=request_timeout) as response:
             if response.status != 200:
                 return False, f"HTTP {response.status}"
             content_type = response.headers.get_content_type()
@@ -727,11 +882,15 @@ def readiness_probe(record: PidRecord) -> tuple[bool, str]:
                 return False, f"unexpected content type {content_type}"
             body = response.read(MAX_HEALTH_BYTES + 1)
     except urlerror.HTTPError as error:
+        _check_deadline(deadline)
         return False, f"HTTP {error.code}"
     except DevContractError as error:
+        _check_deadline(deadline)
         return False, f"{error.code}: exact loopback URL check failed"
     except (urlerror.URLError, TimeoutError, OSError):
+        _check_deadline(deadline)
         return False, "readiness endpoint unavailable"
+    _check_deadline(deadline)
     if len(body) > MAX_HEALTH_BYTES:
         return False, "readiness response exceeds size limit"
     try:
@@ -762,6 +921,7 @@ def readiness_probe(record: PidRecord) -> tuple[bool, str]:
             return False, "receiver must state that provider delivery is unverified"
     if record.service == "test-patterns" and checks.get("timing_calibrated") is not False:
         return False, "test-pattern timing calibration must not be implied"
+    _check_deadline(deadline)
     return True, "ready"
 
 
@@ -770,25 +930,30 @@ def wait_for_record_health(
     timeout_seconds: float,
     *,
     cancelled: Any | None = None,
+    deadline: OperationDeadline | None = None,
 ) -> None:
-    deadline = time.monotonic() + timeout_seconds
+    if deadline is None:
+        deadline = _deadline_after(
+            timeout_seconds,
+            timeout_code="health_timeout",
+            timeout_message=f"{record.service} readiness did not pass within {timeout_seconds:g}s",
+            cancelled=cancelled,
+            cancellation_code="health_cancelled",
+            cancellation_message=f"readiness cancelled for {record.service}",
+        )
     detail = "not checked"
-    while time.monotonic() < deadline:
-        if cancelled is not None and cancelled.is_set():
-            raise DevContractError("health_cancelled", f"readiness cancelled for {record.service}")
+    while True:
+        deadline.check()
         if not process_is_alive(record.pid):
+            deadline.check()
             detail = "process exited"
-        elif not process_matches_record(record):
+        elif not process_matches_record(record, deadline=deadline):
             detail = "process ownership could not be proven"
         else:
-            ready, detail = readiness_probe(record)
+            ready, detail = readiness_probe(record, deadline=deadline)
             if ready:
                 return
-        time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
-    raise DevContractError(
-        "health_timeout",
-        f"{record.service} readiness did not pass within {timeout_seconds:g}s: {detail}",
-    )
+        time.sleep(min(0.1, deadline.remaining()))
 
 
 def wait_for_health(
@@ -797,19 +962,30 @@ def wait_for_health(
     timeout_seconds: float,
     *,
     require_every_record: bool = True,
+    deadline: OperationDeadline | None = None,
 ) -> dict[str, str]:
-    deadline = time.monotonic() + timeout_seconds
+    if deadline is None:
+        deadline = _deadline_after(
+            timeout_seconds,
+            timeout_code="health_timeout",
+            timeout_message=f"readiness did not pass within {timeout_seconds:g}s",
+        )
     pending = {service.name for service in SERVICES}
     details: dict[str, str] = {}
-    while pending and time.monotonic() < deadline:
+    while pending:
+        deadline.check()
         for service in SERVICES:
             if service.name not in pending:
                 continue
+            deadline.check()
             try:
                 record = read_pid_record(root, service.name)
             except DevContractError as error:
+                if error.code in {deadline.timeout_code, deadline.cancellation_code}:
+                    raise
                 details[service.name] = f"{error.code}: {error}"
                 continue
+            deadline.check()
             if record is None:
                 details[service.name] = "PID record missing"
                 if not require_every_record:
@@ -820,24 +996,22 @@ def wait_for_health(
                 details[service.name] = f"PID record uses {record.port}, expected {expected_port}"
                 continue
             if not process_is_alive(record.pid):
+                deadline.check()
                 details[service.name] = "process exited"
                 continue
-            if not process_matches_record(record):
+            if not process_matches_record(record, deadline=deadline):
                 details[service.name] = "process ownership could not be proven"
                 continue
-            ready, detail = readiness_probe(record)
+            ready, detail = readiness_probe(record, deadline=deadline)
             details[service.name] = detail
             if ready:
                 pending.remove(service.name)
         if pending:
-            time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
-    if pending:
-        summary = "; ".join(f"{name}: {details.get(name, 'not checked')}" for name in sorted(pending))
-        raise DevContractError("health_timeout", f"readiness did not pass within {timeout_seconds:g}s: {summary}")
+            time.sleep(min(0.1, deadline.remaining()))
     return details
 
 
-def request_owned_shutdown(record: PidRecord) -> None:
+def request_owned_shutdown(record: PidRecord, *, timeout_seconds: float) -> None:
     request = urlrequest.Request(
         f"http://{BIND_HOST}:{record.port}/__devctl/shutdown",
         data=b"",
@@ -849,7 +1023,7 @@ def request_owned_shutdown(record: PidRecord) -> None:
         method="POST",
     )
     try:
-        with open_loopback_request(request, timeout=1.5) as response:
+        with open_loopback_request(request, timeout=timeout_seconds) as response:
             if response.status != 202:
                 raise DevContractError(
                     "stop_shutdown_refused",
@@ -897,24 +1071,65 @@ def request_owned_shutdown(record: PidRecord) -> None:
         )
 
 
-def stop_owned_record(root: Path, record: PidRecord) -> None:
-    if not process_is_alive(record.pid):
+def _service_stop_deadline(
+    service_name: str, parent_deadline: OperationDeadline | None
+) -> OperationDeadline:
+    started_at = time.monotonic()
+    expires_at = started_at + STOP_TIMEOUT_SECONDS
+    if parent_deadline is not None:
+        expires_at = min(expires_at, parent_deadline.expires_at)
+    return OperationDeadline(
+        expires_at=expires_at,
+        timeout_code="stop_timeout",
+        timeout_message=(
+            f"owned service {service_name} did not complete authenticated shutdown "
+            "within its total deadline; no unchecked PID escalation was sent"
+        ),
+    )
+
+
+def _process_alive_with_deadline(pid: int, deadline: OperationDeadline) -> bool:
+    deadline.check()
+    alive = process_is_alive(pid)
+    deadline.check()
+    return alive
+
+
+def stop_owned_record(
+    root: Path,
+    record: PidRecord,
+    *,
+    parent_deadline: OperationDeadline | None = None,
+) -> None:
+    deadline = _service_stop_deadline(record.service, parent_deadline)
+    if not _process_alive_with_deadline(record.pid, deadline):
+        deadline.check()
         remove_pid_record_if_same(root, record)
         return
-    if not process_matches_record(record):
+    if not process_matches_record(record, deadline=deadline):
         raise DevContractError(
             "stop_ownership_unproven",
             f"refusing shutdown for PID {record.pid}; ownership token for {record.service} does not match",
         )
-    request_owned_shutdown(record)
-    deadline = time.monotonic() + STOP_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        if not process_is_alive(record.pid):
+    request_timeout = deadline.remaining(SHUTDOWN_REQUEST_TIMEOUT_SECONDS)
+    request_owned_shutdown(record, timeout_seconds=request_timeout)
+    deadline.check()
+    while deadline.remaining() > STOP_FINAL_IDENTITY_RESERVE_SECONDS:
+        if not _process_alive_with_deadline(record.pid, deadline):
+            deadline.check()
             remove_pid_record_if_same(root, record)
             return
-        time.sleep(0.05)
-    final_arguments = process_arguments(record.pid)
-    if final_arguments is not None and not process_matches_record(record, final_arguments):
+        wait_budget = deadline.remaining() - STOP_FINAL_IDENTITY_RESERVE_SECONDS
+        if wait_budget > 0:
+            time.sleep(min(0.05, wait_budget))
+    if not _process_alive_with_deadline(record.pid, deadline):
+        deadline.check()
+        remove_pid_record_if_same(root, record)
+        return
+    final_arguments = process_arguments(record.pid, deadline=deadline)
+    if final_arguments is not None and not process_matches_record(
+        record, final_arguments, deadline=deadline
+    ):
         raise DevContractError(
             "stop_pid_reused",
             f"PID {record.pid} identity changed after self-shutdown; no signal was sent",
@@ -925,26 +1140,56 @@ def stop_owned_record(root: Path, record: PidRecord) -> None:
     )
 
 
-def stop_spawned_service(root: Path, spawned: SpawnedService) -> None:
+def stop_spawned_service(
+    root: Path,
+    spawned: SpawnedService,
+    *,
+    parent_deadline: OperationDeadline | None = None,
+) -> None:
     """Stop and reap a Popen child retained by the current controller."""
 
     record, process = spawned.record, spawned.process
+    deadline = _service_stop_deadline(record.service, parent_deadline)
+    deadline.check()
     if process.poll() is not None:
+        deadline.check()
         remove_pid_record_if_same(root, record)
         return
-    if not process_matches_record(record):
+    deadline.check()
+    if not process_matches_record(record, deadline=deadline):
         raise DevContractError(
             "stop_ownership_unproven",
             f"retained child PID {record.pid} no longer matches {record.service}",
         )
-    request_owned_shutdown(record)
+    request_timeout = deadline.remaining(SHUTDOWN_REQUEST_TIMEOUT_SECONDS)
+    request_owned_shutdown(record, timeout_seconds=request_timeout)
+    deadline.check()
+    remaining = deadline.remaining()
+    wait_budget = max(0.0, remaining - STOP_FINAL_IDENTITY_RESERVE_SECONDS)
     try:
-        process.wait(timeout=STOP_TIMEOUT_SECONDS)
+        if wait_budget <= 0:
+            raise subprocess.TimeoutExpired(cmd=record.script, timeout=0.0)
+        process.wait(timeout=wait_budget)
     except subprocess.TimeoutExpired as error:
+        deadline.check()
+        if process.poll() is not None:
+            deadline.check()
+            remove_pid_record_if_same(root, record)
+            return
+        deadline.check()
+        final_arguments = process_arguments(record.pid, deadline=deadline)
+        if final_arguments is not None and not process_matches_record(
+            record, final_arguments, deadline=deadline
+        ):
+            raise DevContractError(
+                "stop_pid_reused",
+                f"retained child PID {record.pid} identity changed; no signal was sent",
+            ) from error
         raise DevContractError(
             "stop_timeout",
             f"owned child {record.service} did not self-terminate; no PID signal escalation was sent",
         ) from error
+    deadline.check()
     remove_pid_record_if_same(root, record)
 
 
@@ -959,30 +1204,49 @@ def command_preflight(root: Path) -> None:
 
 
 def command_up(root: Path, timeout_seconds: float) -> None:
+    deadline = _deadline_after(
+        timeout_seconds,
+        timeout_code="up_timeout",
+        timeout_message=f"dev:up did not complete within its total {timeout_seconds:g}s deadline",
+    )
     started: list[SpawnedService] = []
-    with controller_lock(root):
-        state = preflight(root)
-        # Reconcile only this repository's specifically identified processes if ports.env changed.
-        for service in SERVICES:
-            existing = state.active_records.get(service.name)
-            if existing is not None:
-                expected_port = state.configuration.for_service(service)
-                ready, _detail = readiness_probe(existing)
-                if existing.port != expected_port or not ready:
-                    stop_owned_record(root, existing)
-        for service in SERVICES:
-            existing = read_pid_record(root, service.name)
-            if existing is not None:
-                continue
-            started.append(spawn_service(root, service, state.configuration.for_service(service)))
+    with controller_lock(root, deadline=deadline):
         try:
-            wait_for_health(root, state.configuration, timeout_seconds)
+            state = preflight(root, deadline=deadline)
+            # Reconcile only this repository's specifically identified processes if ports.env changed.
+            for service in SERVICES:
+                deadline.check()
+                existing = state.active_records.get(service.name)
+                if existing is not None:
+                    expected_port = state.configuration.for_service(service)
+                    ready, _detail = readiness_probe(existing, deadline=deadline)
+                    if existing.port != expected_port or not ready:
+                        stop_owned_record(root, existing, parent_deadline=deadline)
+            for service in SERVICES:
+                deadline.check()
+                existing = read_pid_record(root, service.name)
+                deadline.check()
+                if existing is not None:
+                    continue
+                spawned = spawn_service(
+                    root, service, state.configuration.for_service(service)
+                )
+                started.append(spawned)
+                deadline.check()
+            wait_for_health(
+                root, state.configuration, timeout_seconds, deadline=deadline
+            )
+            deadline.check()
+            records = []
+            for service in SERVICES:
+                deadline.check()
+                records.append(read_pid_record(root, service.name))
+                deadline.check()
         except BaseException:
             for spawned in reversed(started):
                 with contextlib.suppress(DevContractError, OSError):
-                    stop_spawned_service(root, spawned)
+                    stop_spawned_service(root, spawned, parent_deadline=deadline)
             raise
-        records = [read_pid_record(root, service.name) for service in SERVICES]
     print("dev:up ok: every allocated service returned its owned readiness document")
     for record in records:
         if record is not None:
@@ -990,27 +1254,48 @@ def command_up(root: Path, timeout_seconds: float) -> None:
 
 
 def command_health(root: Path, timeout_seconds: float) -> None:
+    deadline = _deadline_after(
+        timeout_seconds,
+        timeout_code="health_timeout",
+        timeout_message=f"dev:health did not complete within its total {timeout_seconds:g}s deadline",
+    )
+    deadline.check()
     configuration = parse_ports_file(root / "ports.env")
-    details = wait_for_health(root, configuration, timeout_seconds)
+    deadline.check()
+    details = wait_for_health(
+        root, configuration, timeout_seconds, deadline=deadline
+    )
     print("dev:health ok: all services are ready (TCP acceptance alone was not used)")
     for service in SERVICES:
         print(f"  {service.name}: {details[service.name]}")
 
 
-def command_down(root: Path) -> None:
+def command_down(
+    root: Path, timeout_seconds: float = DEFAULT_DOWN_TIMEOUT_SECONDS
+) -> None:
+    deadline = _deadline_after(
+        timeout_seconds,
+        timeout_code="down_timeout",
+        timeout_message=f"dev:down did not complete within its total {timeout_seconds:g}s deadline",
+    )
     stopped: list[tuple[str, int]] = []
     errors: list[str] = []
-    with controller_lock(root):
+    with controller_lock(root, deadline=deadline):
         # PID records are the sole authority; listener discovery is deliberately not used to kill.
         for service in SERVICES:
             try:
+                deadline.check()
                 record = read_pid_record(root, service.name)
+                deadline.check()
                 if record is None:
                     continue
-                stop_owned_record(root, record)
+                stop_owned_record(root, record, parent_deadline=deadline)
+                deadline.check()
                 stopped.append((record.service, record.pid))
             except (DevContractError, OSError) as error:
                 errors.append(f"{service.name}: {error}")
+                if isinstance(error, DevContractError) and error.code == deadline.timeout_code:
+                    break
     for service_name, pid in stopped:
         print(f"  stopped {service_name} pid {pid}")
     if errors:
@@ -1025,7 +1310,16 @@ def command_down(root: Path) -> None:
 def command_e2e_server(root: Path, timeout_seconds: float) -> None:
     """Own the complete service block for one Playwright coordinator lifecycle."""
 
+    startup_expires_at = time.monotonic() + timeout_seconds
     stop_requested = threading.Event()
+    startup_deadline = OperationDeadline(
+        expires_at=startup_expires_at,
+        timeout_code="e2e_start_timeout",
+        timeout_message=f"E2E service startup did not complete within {timeout_seconds:g}s",
+        cancelled=stop_requested,
+        cancellation_code="e2e_start_cancelled",
+        cancellation_message="E2E service startup was cancelled",
+    )
     previous_handlers: dict[int, Any] = {}
 
     def handle_stop(_signum: int, _frame: Any) -> None:
@@ -1038,14 +1332,17 @@ def command_e2e_server(root: Path, timeout_seconds: float) -> None:
     spawned_services: list[SpawnedService] = []
     cleanup_errors: list[str] = []
     try:
-        with controller_lock(root):
-            state = preflight(root)
+        startup_deadline.check()
+        with controller_lock(root, deadline=startup_deadline):
+            state = preflight(root, deadline=startup_deadline)
             if state.active_records:
                 active = ", ".join(sorted(state.active_records))
                 raise DevContractError(
                     "e2e_existing_service",
                     f"Playwright refuses to reuse already-running owned services: {active}",
                 )
+            def remaining_startup_seconds() -> float:
+                return startup_deadline.remaining()
 
             # The Playwright readiness URL is on test-patterns. Start and prove the
             # other three services first so that 4222 cannot become a false gate.
@@ -1053,17 +1350,19 @@ def command_e2e_server(root: Path, timeout_seconds: float) -> None:
                 service for service in SERVICES if service.name != "test-patterns"
             ) + (SERVICE_BY_NAME["test-patterns"],)
             for service in ordered_services:
-                if stop_requested.is_set():
-                    raise DevContractError("e2e_start_cancelled", "E2E service startup was cancelled")
+                remaining_startup_seconds()
                 spawned = spawn_service(
                     root, service, state.configuration.for_service(service)
                 )
                 spawned_services.append(spawned)
+                startup_deadline.check()
                 wait_for_record_health(
                     spawned.record,
-                    timeout_seconds,
+                    remaining_startup_seconds(),
                     cancelled=stop_requested,
+                    deadline=startup_deadline,
                 )
+                startup_deadline.check()
 
         print("dev:e2e-server ready: all four owned services passed semantic readiness", flush=True)
         while not stop_requested.wait(0.1):
@@ -1075,15 +1374,34 @@ def command_e2e_server(root: Path, timeout_seconds: float) -> None:
                         f"{spawned.record.service} exited unexpectedly with status {return_code}",
                     )
     finally:
-        if spawned_services:
-            with controller_lock(root):
-                for spawned in reversed(spawned_services):
-                    try:
-                        stop_spawned_service(root, spawned)
-                    except (DevContractError, OSError) as error:
-                        cleanup_errors.append(f"{spawned.record.service}: {error}")
-        for signal_number, previous in previous_handlers.items():
-            signal.signal(signal_number, previous)
+        try:
+            if spawned_services:
+                cleanup_deadline = _deadline_after(
+                    E2E_CLEANUP_TIMEOUT_SECONDS,
+                    timeout_code="e2e_cleanup_timeout",
+                    timeout_message=(
+                        "E2E cleanup did not complete within its total "
+                        f"{E2E_CLEANUP_TIMEOUT_SECONDS:g}s deadline"
+                    ),
+                )
+                try:
+                    with controller_lock(root, deadline=cleanup_deadline):
+                        for spawned in reversed(spawned_services):
+                            try:
+                                cleanup_deadline.check()
+                                stop_spawned_service(
+                                    root,
+                                    spawned,
+                                    parent_deadline=cleanup_deadline,
+                                )
+                                cleanup_deadline.check()
+                            except (DevContractError, OSError) as error:
+                                cleanup_errors.append(f"{spawned.record.service}: {error}")
+                except (DevContractError, OSError) as error:
+                    cleanup_errors.append(f"controller-lock: {error}")
+        finally:
+            for signal_number, previous in previous_handlers.items():
+                signal.signal(signal_number, previous)
     if cleanup_errors:
         raise DevContractError(
             "e2e_cleanup_incomplete",
@@ -1108,7 +1426,10 @@ def parse_arguments(argv: Sequence[str]) -> argparse.Namespace:
     subparsers.add_parser("preflight", help="validate namespace isolation and all block ports")
     up_parser = subparsers.add_parser("up", help="start every allocated service")
     up_parser.add_argument("--timeout", type=positive_bounded_float, default=DEFAULT_HEALTH_TIMEOUT_SECONDS)
-    subparsers.add_parser("down", help="stop only validated repository-owned PIDs")
+    down_parser = subparsers.add_parser("down", help="stop only validated repository-owned PIDs")
+    down_parser.add_argument(
+        "--timeout", type=positive_bounded_float, default=DEFAULT_DOWN_TIMEOUT_SECONDS
+    )
     health_parser = subparsers.add_parser("health", help="poll semantic readiness for every service")
     health_parser.add_argument(
         "--timeout", type=positive_bounded_float, default=DEFAULT_HEALTH_TIMEOUT_SECONDS
@@ -1131,7 +1452,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif arguments.command == "up":
             command_up(root, arguments.timeout)
         elif arguments.command == "down":
-            command_down(root)
+            command_down(root, arguments.timeout)
         elif arguments.command == "health":
             command_health(root, arguments.timeout)
         elif arguments.command == "e2e-server":

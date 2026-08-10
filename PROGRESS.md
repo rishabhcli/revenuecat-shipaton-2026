@@ -108,3 +108,25 @@ This file is append-only. Each entry records delivered behavior, exact verificat
 
 - No detached clean pass or CI pass is claimed. The repository is still not in production and Tier 0 remains open. Commit this measured deadline calibration, rerun the cold detached gate, restore the standing services, and archive evidence only if the complete canonical contract exits zero.
 - Count correction for the first bullet of this entry: the timed-out `6e12491` run executed 28 repository-tool tests; the 29th timeout-contract test was added and passed afterward as part of the calibration change.
+
+## 2026-08-10T14:09:29Z — Loaded-host lifecycle deadline repair
+
+### Failures observed without unsafe fallback
+
+- The 1,800-second `make verify-clean` run against commit `736dc8f5997932bbb401f96cf6c0c8ec97c43477` passed bootstrap, the initial four-service gate, strict debug/release builds, 29 tool tests, 70 dev-contract tests, 52 Swift tests, and all-four integration setup. A second integration startup then truthfully exited 2 because evaluation and artifact readiness had not become available inside the prior shared 10-second startup budget. The harness did not time out, did not false-green, authenticated cleanup succeeded, `git worktree list` returned only the source checkout, and the failed evidence artifact was deleted.
+- While exercising the startup repair, the first ownership-safe `devctl down` stopped three services but refused success when test-patterns had not exited inside the prior five-second post-request wait. It never sent an unchecked PID signal. Immediate inspection found no listener and an exited process; a second ownership-validated `devctl down` reconciled only that same PID record.
+
+### Bounded lifecycle behavior delivered
+
+- Set one explicit 30-second total startup/readiness budget for canonical Make and the direct controller default. Playwright's coordinator uses one decreasing 30-second budget across all four services, still verifies the three non-browser services before spawning port 4222, and retains its separate 45-second outer bound.
+- Set authenticated self-shutdown to one 10-second total per-service budget that includes the loopback request and remaining exit wait. Retained child cleanup passes only the remaining time to `Popen.wait`; the four-service coordinator worst case remains 40 seconds inside Playwright's 45-second graceful bound. Detached cleanup has an independent 50-second process bound and still retains worktree/PID evidence on failure.
+- Added fake-clock tests proving E2E budgets decrease across services and cross the old 10-second boundary without multiplying the timeout, a loaded owned process may exit after five but before ten seconds without signalling, retained-child wait receives only the remaining deadline, CLI defaults and all six canonical Make calls use 30 seconds, and the 40-second complete-block bound fits both outer cleanup envelopes.
+
+### Commands and current truth
+
+- `make test-tools` passed 29/29; `make test-python` passed 73/73; `make lint`, Python bytecode compilation, `make test-integration`, and `make test-e2e` passed. Playwright ran all five browser tests in the ownership-scoped lifecycle. `python3 tools/check_text.py`, `make policy-check`, `actionlint .github/workflows/verify.yml`, `git diff --check`, and semantic `dev:health` passed.
+- This remains local harness evidence only. No clean-check success, CI success, signed iOS target, device/provider evidence, or production state is claimed.
+
+### Next item selected by GOAL.md section 10.1
+
+- Commit the measured lifecycle repair, rerun `make verify-clean` from the exact clean revision, restore the standing services, and archive evidence only if every canonical stage and cleanup exits zero; then push and verify the exact SHA-pinned workflow run.

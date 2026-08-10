@@ -321,6 +321,10 @@ class CleanCheckoutHarnessTests(unittest.TestCase):
             verify_clean_checkout.ROOT / ".github" / "workflows" / "verify.yml"
         ).read_text(encoding="utf-8")
         self.assertIn("CLEAN_VERIFY_TIMEOUT_SECONDS ?= 1800", makefile)
+        self.assertEqual(
+            verify_clean_checkout.DETACHED_SHUTDOWN_TIMEOUT_SECONDS,
+            50,
+        )
         self.assertIn("    timeout-minutes: 40", workflow)
         self.assertIn("        timeout-minutes: 35", workflow)
 
