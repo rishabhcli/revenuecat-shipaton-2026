@@ -98,6 +98,22 @@ struct TestLiveEvidenceFactory {
     return try LiveFrameWindow(frames: frames)
   }
 
+  /// Issue one further frame from the same session and source at an exact
+  /// monotonic timestamp, so a test can control an assessment's age precisely.
+  /// The issuer still enforces that timestamps increase.
+  mutating func issueFrame(atNanoseconds timestamp: UInt64) throws -> LiveFrameReference {
+    let frame = try captureIssuer.issueFrame(monotonicTimestampNanoseconds: timestamp)
+    nextTimestampNanoseconds = timestamp + 1_000_000
+    return frame
+  }
+
+  /// Issue one further frame to stand in for "what the camera is delivering
+  /// now", leaving the cursor free for the next window.
+  mutating func issueFrame(advanceNanoseconds: UInt64) throws -> LiveFrameReference {
+    nextTimestampNanoseconds += advanceNanoseconds
+    return try issueFrame(atNanoseconds: nextTimestampNanoseconds)
+  }
+
   mutating func issueEvidence(
     frameCount: Int,
     normalizedEnergy: Double,
@@ -128,4 +144,32 @@ func defaultCorrectionThresholds() throws -> CorrectionThresholds {
     minimumCandidateMargin: UnitInterval(0.10),
     minimumFrameCountPerWindow: 3
   )
+}
+
+func defaultFreshnessPolicy() throws -> RecordingFreshnessPolicy {
+  try RecordingFreshnessPolicy(maximumAssessmentAgeNanoseconds: 500_000_000)
+}
+
+/// Gate an assessment under otherwise-ideal live conditions.
+///
+/// A test that is about the assessment should not silently also depend on
+/// staleness, session identity, or component health, so those are held healthy
+/// here and attacked directly in `RecordingConfidencePropertyTests`.
+func liveRecordingConfidence(
+  _ assessment: CorrectionConfidence,
+  assessedThrough: LiveFrameReference,
+  latestObservedFrame: LiveFrameReference,
+  sourceCondition: SourceCondition,
+  availability: AnalysisAvailability = .measuring
+) throws -> RecordingConfidence {
+  RecordingConfidenceGate.evaluate(
+    RecordingConfidenceInputs(
+      assessment: assessment,
+      assessedThrough: assessedThrough,
+      latestObservedFrame: latestObservedFrame,
+      sourceCondition: sourceCondition,
+      availability: availability
+    ),
+    policy: try defaultFreshnessPolicy()
+  ).confidence
 }

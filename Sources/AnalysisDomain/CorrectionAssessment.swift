@@ -285,6 +285,7 @@ public enum AnalysisDomainError: CodedDomainError, Equatable {
   case insufficientLiveEvidence(requiredFrameCount: Int)
   case nonPositiveConfidenceThreshold
   case invalidMinimumFrameCount
+  case freshnessBudgetOutsideSupportedRange(smallestNanoseconds: UInt64, largestNanoseconds: UInt64)
 
   public var code: String {
     switch self {
@@ -294,6 +295,7 @@ public enum AnalysisDomainError: CodedDomainError, Equatable {
     case .insufficientLiveEvidence: "analysis.evidence.insufficient"
     case .nonPositiveConfidenceThreshold: "analysis.threshold.non_positive"
     case .invalidMinimumFrameCount: "analysis.threshold.invalid_frame_count"
+    case .freshnessBudgetOutsideSupportedRange: "analysis.freshness.outside_supported_range"
     }
   }
 
@@ -311,6 +313,8 @@ public enum AnalysisDomainError: CodedDomainError, Equatable {
       "Reduction and candidate-margin thresholds must be greater than zero."
     case .invalidMinimumFrameCount:
       "The minimum frame count is outside the supported frame-window range."
+    case .freshnessBudgetOutsideSupportedRange(let smallest, let largest):
+      "The recording freshness budget must be between \(smallest) and \(largest) nanoseconds."
     }
   }
 }

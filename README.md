@@ -97,6 +97,8 @@ Technology choices are constraints, not decorations. A dependency is accepted on
 
 Any change that can violate an invariant requires a written design review, tests demonstrating preservation under failure, and an explicit update to this README and AGENTS.md.
 
+Invariant 2 is additionally encoded in `Sources/AnalysisDomain/RecordingConfidence.swift`, where a single gate is the only producer of the only green state, a stale or component-failure condition withdraws it, and an independent postcondition refuses and reports rather than letting a green value through. Its encodings, property attacks, boundary behaviour, and alert contract are recorded in [docs/runbooks/recording-confidence.md](./docs/runbooks/recording-confidence.md). That alert contract is defined and tested but not yet wired to a live destination, because no application target or deployed environment exists.
+
 ## Security, privacy, and safety
 
 - On-device media, least-privilege permissions, no automatic upload

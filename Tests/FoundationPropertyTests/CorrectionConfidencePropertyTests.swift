@@ -10,6 +10,8 @@ final class CorrectionConfidencePropertyTests: XCTestCase {
     var factory = try TestLiveEvidenceFactory()
     let before = try factory.issueEvidence(frameCount: 4, normalizedEnergy: 1)
     let after = try factory.issueEvidence(frameCount: 4, normalizedEnergy: 0.01)
+    let assessedThrough = try XCTUnwrap(after.frameWindow.frames.last)
+    let latestObservedFrame = try factory.issueFrame(advanceNanoseconds: 1_000_000)
     let thresholds = try defaultCorrectionThresholds()
     var evaluatedReasons = 0
 
@@ -21,7 +23,14 @@ final class CorrectionConfidencePropertyTests: XCTestCase {
         candidateMargin: try UnitInterval(1),
         thresholds: thresholds
       )
-      let indicator = CorrectionIndicator(confidence: confidence)
+      let indicator = CorrectionIndicator(
+        recording: try liveRecordingConfidence(
+          confidence,
+          assessedThrough: assessedThrough,
+          latestObservedFrame: latestObservedFrame,
+          sourceCondition: .unsupported(reason)
+        )
+      )
 
       XCTAssertEqual(confidence, .unavailable(.unsupported(reason)))
       XCTAssertEqual(indicator.tone, .refusal)
@@ -63,7 +72,13 @@ final class CorrectionConfidencePropertyTests: XCTestCase {
         unstable.measuredReduction.value,
         thresholds.minimumReduction.value
       )
-      XCTAssertEqual(CorrectionIndicator(confidence: confidence).tone, .caution)
+      let recording = try liveRecordingConfidence(
+        confidence,
+        assessedThrough: try XCTUnwrap(after.frameWindow.frames.last),
+        latestObservedFrame: try factory.issueFrame(advanceNanoseconds: 1_000_000),
+        sourceCondition: .unstable
+      )
+      XCTAssertEqual(CorrectionIndicator(recording: recording).tone, .caution)
       evaluatedPairs += 1
     }
 
@@ -88,9 +103,15 @@ final class CorrectionConfidencePropertyTests: XCTestCase {
     XCTAssertEqual(verified.captureSessionID, after.frameWindow.sessionID)
     XCTAssertEqual(verified.measuredReduction.value, 0.75, accuracy: 0.000_001)
     XCTAssertEqual(verified.sampledFrameCount, 10)
-    XCTAssertEqual(CorrectionIndicator(confidence: confidence).tone, .positive)
+    let recording = try liveRecordingConfidence(
+      confidence,
+      assessedThrough: try XCTUnwrap(after.frameWindow.frames.last),
+      latestObservedFrame: try factory.issueFrame(advanceNanoseconds: 1_000_000),
+      sourceCondition: .stable
+    )
+    XCTAssertEqual(CorrectionIndicator(recording: recording).tone, .positive)
 
-    let proof = try FreeProofIssuer.issue(from: confidence)
+    let proof = try FreeProofIssuer.issue(from: recording)
     let freeAccess = EntitlementPolicy.access(for: .free)
     XCTAssertEqual(
       PaywallPresentationPolicy.decide(proof: nil, access: freeAccess),
@@ -351,7 +372,9 @@ final class CorrectionConfidencePropertyTests: XCTestCase {
     for reason in UnsupportedSourceReason.allCases {
       assertThrowsEqual(
         UIDomainError.correctionNotVerified,
-        try FreeProofIssuer.issue(from: .unavailable(.unsupported(reason)))
+        try FreeProofIssuer.issue(
+          from: .refused(.correctionUnavailable(.unsupported(reason)))
+        )
       )
       evaluatedCases += 1
     }
@@ -359,12 +382,17 @@ final class CorrectionConfidencePropertyTests: XCTestCase {
     var factory = try TestLiveEvidenceFactory(session: "unstable-proof-session")
     let before = try factory.issueEvidence(frameCount: 3, normalizedEnergy: 1)
     let after = try factory.issueEvidence(frameCount: 3, normalizedEnergy: 0.1)
-    let unstable = CorrectionAssessment.evaluate(
-      before: before,
-      after: after,
-      sourceCondition: .unstable,
-      candidateMargin: try UnitInterval(1),
-      thresholds: try defaultCorrectionThresholds()
+    let unstable = try liveRecordingConfidence(
+      CorrectionAssessment.evaluate(
+        before: before,
+        after: after,
+        sourceCondition: .unstable,
+        candidateMargin: try UnitInterval(1),
+        thresholds: try defaultCorrectionThresholds()
+      ),
+      assessedThrough: try XCTUnwrap(after.frameWindow.frames.last),
+      latestObservedFrame: try factory.issueFrame(advanceNanoseconds: 1_000_000),
+      sourceCondition: .unstable
     )
     assertThrowsEqual(
       UIDomainError.correctionNotVerified,

@@ -331,3 +331,44 @@ This file is append-only. Each entry records delivered behavior, exact verificat
 ### Next item selected by `GOAL.md` section 10.1
 
 - With the dev harness healthy and no failing gate that the repository can currently turn green, section 10.1 selects item 7, the lowest-numbered incomplete tier: **Tier 1**. Begin with invariant I2, "unsupported/unstable conditions are visible and recording confidence never turns green", because a false green is the highest-impact wrong result a user can be shown. I2 currently has typed policy and property attacks but no boundary assertion under component failure, no structured operational event, no alert contract, and no runbook. Deliver those, then continue through the remaining invariants by the same standard.
+
+## 2026-08-10T21:05:00Z — Tier 1, invariant I2: recording confidence cannot be falsely green
+
+### Why this was the selected item
+
+- Section 10.1 found no failing `dev:health`, no failing release gate the repository can currently turn green, and no violated invariant, so it selected item 7: the lowest-numbered incomplete tier. Tier 1 had typed policy and property attacks for all eight invariants but no boundary assertion under component failure, no operational event, no alert contract, and no runbook for any of them. I2 was taken first because a false green is the highest-impact wrong result a user of this product can be shown: it costs them a shoot they only discover was ruined later.
+
+### The gap this closed
+
+- `CorrectionConfidence` describes frames that were **already measured**. It says nothing about whether measurement is still happening. Nothing in the repository prevented a user interface from holding a `.verified` value and rendering it green indefinitely after the analysis component stalled, after the source drifted, or after the scene changed. That is the exact false-green failure mode I2 exists to prevent, and it was reachable.
+
+### Behavior delivered
+
+- `Sources/AnalysisDomain/RecordingConfidence.swift` introduces `RecordingConfidence`, whose only green case `readyToRecord` carries a `VerifiedCorrection` that only `CorrectionAssessment.evaluate` can mint, and `RecordingConfidenceGate` as its sole producer.
+- `AnalysisAvailability` models the health of the analysis component itself as `measuring`, `degraded` (four named causes), or `stalled` (three named causes), so a component failure withdraws green without the assessment changing at all.
+- `RecordingFreshnessPolicy` bounds how old an assessment may be and still back a green state, validated at construction to 1 ms through 2 s and refused with `analysis.freshness.outside_supported_range` outside it.
+- The gate fails closed in a fixed order: another session, another source, an observation older than the assessment, a stalled component, an aged-out assessment, an unavailable correction, then drift or degradation. There is no fallback branch and no default-to-green path.
+- `postconditionHolds` independently re-derives every condition a green state requires and is deliberately **not** factored out of the decision path, because a guard that shares its implementation with the code it guards cannot detect that the implementation changed. If it rejects a green decision, the gate returns `refused(.invariantGuardTripped)` and emits `OperationalEvent.invariantViolated`.
+- `CaptureDomain` gained `DomainInvariant` (I1-I8, so a violation is a named alertable signal), `InvariantGuard`, `InvariantViolationEvent`, and the scalar-only `RecordingConfidenceEvent`. The event carries an outcome, a closed reason, and a clamped millisecond age; it is constructed from an unsigned duration so it cannot fail and cannot carry a frame, pixel, identifier, or timestamp. Every decision ships its telemetry with it as `RecordingConfidenceDecision`.
+- `CorrectionIndicator.init(recording:)` is now the only initializer, so a positive tone is unreachable from a correction assessment alone. Each tone keeps a distinct shape, visible text, and accessibility label, so state is never carried by colour alone. `FreeProofIssuer` now requires `.readyToRecord`, which removes the second path to a "verified" user-facing state and tightens I6 as a side effect.
+- `docs/runbooks/recording-confidence.md` records the encodings, the attacking tests with their declared case counts, the fail-closed boundary order, and two alerts: `recording_confidence_invariant_violated` at severity 1 with a threshold of one event and an explicit instruction never to silence or rate-limit it, and `recording_confidence_withheld_rate` at severity 3 with **no threshold declared, because none has been measured**. The runbook states in its first paragraph that it is not wired to a live destination and may not be cited as evidence that alerting is operational.
+
+### Commands run and evidence
+
+- `xcrun swift test` passed 62/62 XCTest methods, up from 52, including 10 new `RecordingConfidencePropertyTests`. The repository now declares 27 named property attacks, up from 21.
+- The new attacks and their declared case counts: `testGreenRequiresVerifiedStableMeasuringAndFreshEvidence_2520DistinctCases` and `testThePostconditionGuardAgreesOnEveryCell_2520DistinctCases` (15 assessments x 7 source conditions x 8 availability states x 3 ages, each asserting the guard and the decision path agree), `testAComponentFailureWithdrawsGreenWithoutChangingTheAssessment_7DistinctFailures`, `testAnAgeingAssessmentLosesGreenAtTheDeclaredBoundary_4DistinctAges`, `testFreshnessBudgetRefusesValuesOutsideTheDeclaredRange_4DistinctBounds`, `testEveryInvariantIsIdentifiedForAlerting_8DistinctInvariants`, plus session-splice, source-splice, clock-skew, and telemetry-shape tests. Exactly two of the 2,520 cells are green, and the test asserts that count.
+- Two real test-harness defects were found and fixed while building this: `TestLiveEvidenceFactory.issueFrame` left its timestamp cursor on the value it had just issued, so a following window collided with it, and the same cursor made "age" depend on call order rather than on the requested age. The factory now issues at exact monotonic timestamps and advances the cursor past them, so each matrix cell varies only in the dimension it is meant to vary in.
+- `make lint`, `make format`, and `make verify-all` passed; `verify-all` reported `tracked-content=stable index=stable untracked-content=stable ignored-artifacts=allowlisted services=ownership-stopped`.
+- GitHub Actions run 31428646694 for the preceding commit `e85cc37` concluded `success`, so hosted verification stayed green across the evidence commit.
+
+### What is now true that was not true before
+
+- A stale, drifting, or component-failed capture cannot produce a green recording indicator, in a way enforced by types and by an independent runtime guard rather than by convention, and any disagreement between the two is a named severity-1 signal with a written response.
+
+### What is still not true
+
+- There is no application target, so nothing yet calls this gate on real capture callbacks, no telemetry leaves the process, and no alert can fire. Invariants I1 and I3 through I8 still lack the same treatment. Every release gate remains red and the repository remains not in production.
+
+### Next item selected by `GOAL.md` section 10.1
+
+- Continue Tier 1 at item 7 with invariant **I3**, "diagnostic work drops before recorded frames". `CaptureAdmissionPolicy` already encodes the arithmetic and is attacked by 32,768 cases, but there is no typed notion of a component under backpressure, no operational event when diagnostics are dropped, no alert contract, and no runbook. Give I3 the same five answers I2 now has, then continue through I1 and I4 through I8 by the same standard.
