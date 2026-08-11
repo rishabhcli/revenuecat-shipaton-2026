@@ -443,7 +443,10 @@ final class RecordingConfidencePropertyTests: XCTestCase {
       DomainInvariant.recordingConfidenceNeverFalselyGreen.rawValue,
       "I2"
     )
-    XCTAssertEqual(InvariantGuard.allCases, [.recordingConfidencePostcondition])
+    XCTAssertEqual(
+      InvariantGuard.allCases,
+      [.recordingConfidencePostcondition, .captureAdmissionPostcondition]
+    )
   }
 
   private func isMeasuring(_ availability: AnalysisAvailability) -> Bool {

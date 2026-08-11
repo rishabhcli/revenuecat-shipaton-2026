@@ -1,39 +1,157 @@
 import CameraDomain
+import CaptureDomain
 import XCTest
 
 final class CameraAdmissionPropertyTests: XCTestCase {
-  func testRecordedFramesConsumeCapacityBeforeDiagnostics_32_768DistinctCases() throws {
+  /// 32 recorded x 32 diagnostic x 32 slots x 5 pressure values.
+  func testRecordedFramesConsumeCapacityBeforeDiagnostics_163_840DistinctCases() throws {
     var evaluatedCases = 0
+    var starvedCases = 0
 
     for recorded in 0..<32 {
       for diagnostics in 0..<32 {
         for slots in 0..<32 {
-          let load = try CaptureLoad(
-            recordedFramesAwaiting: recorded,
-            diagnosticJobsAwaiting: diagnostics,
-            availableSlots: slots
-          )
-          let decision = CaptureAdmissionPolicy.decide(for: load)
-          let expectedRecorded = min(recorded, slots)
-          let expectedDiagnostics = min(diagnostics, slots - expectedRecorded)
+          for pressure in CapturePressure.allCases {
+            let load = try CaptureLoad(
+              recordedFramesAwaiting: recorded,
+              diagnosticJobsAwaiting: diagnostics,
+              availableSlots: slots,
+              pressure: pressure
+            )
+            let decision = CaptureAdmissionPolicy.decide(for: load)
+            let admission = decision.admission
+            let expectedRecorded = min(recorded, slots)
+            let expectedDiagnostics =
+              pressure == .nominal ? min(diagnostics, slots - expectedRecorded) : 0
 
-          XCTAssertEqual(decision.recordedFramesAdmitted, expectedRecorded)
-          XCTAssertEqual(decision.diagnosticJobsAdmitted, expectedDiagnostics)
-          XCTAssertEqual(decision.recordedFramesDeferred, recorded - expectedRecorded)
-          XCTAssertEqual(decision.diagnosticJobsDropped, diagnostics - expectedDiagnostics)
-          XCTAssertLessThanOrEqual(
-            decision.recordedFramesAdmitted + decision.diagnosticJobsAdmitted,
-            slots
-          )
-          if decision.recordedFramesDeferred > 0 {
-            XCTAssertEqual(decision.diagnosticJobsAdmitted, 0)
+            XCTAssertEqual(admission.recordedFramesAdmitted, expectedRecorded)
+            XCTAssertEqual(admission.diagnosticJobsAdmitted, expectedDiagnostics)
+            XCTAssertEqual(admission.recordedFramesDeferred, recorded - expectedRecorded)
+            XCTAssertEqual(admission.diagnosticJobsDropped, diagnostics - expectedDiagnostics)
+            XCTAssertLessThanOrEqual(
+              admission.recordedFramesAdmitted + admission.diagnosticJobsAdmitted,
+              slots
+            )
+            XCTAssertFalse(admission.starvesRecordedFrames)
+            XCTAssertTrue(CaptureAdmissionPolicy.postconditionHolds(admission, for: load))
+            if admission.starvesRecordedFrames { starvedCases += 1 }
+            evaluatedCases += 1
           }
-          evaluatedCases += 1
         }
       }
     }
 
-    XCTAssertEqual(evaluatedCases, 32_768)
+    XCTAssertEqual(evaluatedCases, 163_840)
+    XCTAssertEqual(starvedCases, 0)
+  }
+
+  /// Fault injection: the capture pipeline is under pressure, so diagnostic work
+  /// takes no capacity at all even when capacity is abundant.
+  func testNonNominalPressureStopsDiagnosticWorkEntirely_4DistinctPressures() throws {
+    var evaluatedPressures = 0
+
+    for pressure in CapturePressure.allCases where pressure != .nominal {
+      let decision = CaptureAdmissionPolicy.decide(
+        for: try CaptureLoad(
+          recordedFramesAwaiting: 1,
+          diagnosticJobsAwaiting: 500,
+          availableSlots: 1_000,
+          pressure: pressure
+        )
+      )
+
+      XCTAssertEqual(decision.admission.recordedFramesAdmitted, 1)
+      XCTAssertEqual(decision.admission.diagnosticJobsAdmitted, 0)
+      XCTAssertEqual(decision.admission.diagnosticJobsDropped, 500)
+      XCTAssertEqual(decision.admission.recordedFramesDeferred, 0)
+      XCTAssertEqual(decision.admission.pressure, pressure)
+      evaluatedPressures += 1
+    }
+
+    XCTAssertEqual(evaluatedPressures, 4)
+
+    let nominal = CaptureAdmissionPolicy.decide(
+      for: try CaptureLoad(
+        recordedFramesAwaiting: 1,
+        diagnosticJobsAwaiting: 500,
+        availableSlots: 1_000,
+        pressure: .nominal
+      )
+    )
+    XCTAssertEqual(nominal.admission.diagnosticJobsAdmitted, 500)
+  }
+
+  /// Fault injection: capacity collapses to nothing while both queues are full.
+  func testNoCapacityDefersEveryRecordedFrameAndRunsNoDiagnostics() throws {
+    let decision = CaptureAdmissionPolicy.decide(
+      for: try CaptureLoad(
+        recordedFramesAwaiting: 64,
+        diagnosticJobsAwaiting: 64,
+        availableSlots: 0,
+        pressure: .nominal
+      )
+    )
+
+    XCTAssertEqual(decision.admission.recordedFramesAdmitted, 0)
+    XCTAssertEqual(decision.admission.recordedFramesDeferred, 64)
+    XCTAssertEqual(decision.admission.diagnosticJobsAdmitted, 0)
+    XCTAssertEqual(decision.admission.diagnosticJobsDropped, 64)
+    XCTAssertFalse(decision.admission.starvesRecordedFrames)
+  }
+
+  func testEveryDecisionRecordsScalarCountsAndNoViolation() throws {
+    let decision = CaptureAdmissionPolicy.decide(
+      for: try CaptureLoad(
+        recordedFramesAwaiting: 3,
+        diagnosticJobsAwaiting: 7,
+        availableSlots: 5,
+        pressure: .nominal
+      )
+    )
+
+    XCTAssertEqual(decision.events.count, 1)
+    guard case .captureAdmissionDecided(let event) = decision.events[0] else {
+      return XCTFail("Every admission decision must record its counts.")
+    }
+    XCTAssertEqual(event.pressure, .nominal)
+    XCTAssertEqual(event.recordedFramesAdmitted, 3)
+    XCTAssertEqual(event.recordedFramesDeferred, 0)
+    XCTAssertEqual(event.diagnosticJobsAdmitted, 2)
+    XCTAssertEqual(event.diagnosticJobsDropped, 5)
+    requireSendable(CaptureAdmissionEvent.self)
+  }
+
+  /// The guard must reject exactly the shapes invariant I3 forbids, judged
+  /// against admissions the policy itself produced.
+  func testThePostconditionGuardRejectsStarvationAndMiscounting() throws {
+    let load = try CaptureLoad(
+      recordedFramesAwaiting: 4,
+      diagnosticJobsAwaiting: 4,
+      availableSlots: 2,
+      pressure: .nominal
+    )
+    let honest = CaptureAdmissionPolicy.decide(for: load).admission
+    XCTAssertTrue(CaptureAdmissionPolicy.postconditionHolds(honest, for: load))
+
+    let strictlySmallerLoad = try CaptureLoad(
+      recordedFramesAwaiting: 4,
+      diagnosticJobsAwaiting: 4,
+      availableSlots: 8,
+      pressure: .nominal
+    )
+    // The same admission judged against a different load must be rejected,
+    // because the guard re-derives the counts instead of trusting them.
+    XCTAssertFalse(CaptureAdmissionPolicy.postconditionHolds(honest, for: strictlySmallerLoad))
+
+    let underPressure = try CaptureLoad(
+      recordedFramesAwaiting: 4,
+      diagnosticJobsAwaiting: 4,
+      availableSlots: 8,
+      pressure: .thermalThrottling
+    )
+    let generous = CaptureAdmissionPolicy.decide(for: strictlySmallerLoad).admission
+    XCTAssertGreaterThan(generous.diagnosticJobsAdmitted, 0)
+    XCTAssertFalse(CaptureAdmissionPolicy.postconditionHolds(generous, for: underPressure))
   }
 
   func testCaptureLoadRefusesNegativeCounts_3_072DistinctCases() {
@@ -53,7 +171,8 @@ final class CameraAdmissionPropertyTests: XCTestCase {
           try CaptureLoad(
             recordedFramesAwaiting: input.0,
             diagnosticJobsAwaiting: input.1,
-            availableSlots: input.2
+            availableSlots: input.2,
+            pressure: .nominal
           )
         )
         evaluatedCases += 1
@@ -63,28 +182,44 @@ final class CameraAdmissionPropertyTests: XCTestCase {
     XCTAssertEqual(evaluatedCases, 3_072)
   }
 
-  func testAdmissionArithmeticHandlesIntegerExtremesWithoutOverflow() throws {
+  /// A count above the supported depth is corrupted rather than merely large, so
+  /// it is refused at the boundary instead of entering admission arithmetic.
+  func testQueueDepthsAboveTheSupportedMaximumAreRefused_6DistinctCases() throws {
+    let maximum = CaptureLoad.maximumQueueDepth
+    let expectedError = CameraDomainError.queueDepthAboveSupportedMaximum(maximum: maximum)
+    var evaluatedCases = 0
+
+    for oversized in [maximum + 1, Int.max] {
+      for position in 0..<3 {
+        assertThrowsEqual(
+          expectedError,
+          try CaptureLoad(
+            recordedFramesAwaiting: position == 0 ? oversized : 0,
+            diagnosticJobsAwaiting: position == 1 ? oversized : 0,
+            availableSlots: position == 2 ? oversized : 0,
+            pressure: .nominal
+          )
+        )
+        evaluatedCases += 1
+      }
+    }
+
+    XCTAssertEqual(evaluatedCases, 6)
+    XCTAssertEqual(expectedError.code, "camera.capture_load.queue_depth_too_large")
+
+    // At the supported maximum the arithmetic still holds exactly.
     let saturated = CaptureAdmissionPolicy.decide(
       for: try CaptureLoad(
-        recordedFramesAwaiting: Int.max,
-        diagnosticJobsAwaiting: Int.max,
-        availableSlots: Int.max
+        recordedFramesAwaiting: maximum,
+        diagnosticJobsAwaiting: maximum,
+        availableSlots: maximum,
+        pressure: .nominal
       )
     )
-    XCTAssertEqual(saturated.recordedFramesAdmitted, Int.max)
-    XCTAssertEqual(saturated.diagnosticJobsAdmitted, 0)
-    XCTAssertEqual(saturated.recordedFramesDeferred, 0)
-    XCTAssertEqual(saturated.diagnosticJobsDropped, Int.max)
-
-    let diagnosticsOnly = CaptureAdmissionPolicy.decide(
-      for: try CaptureLoad(
-        recordedFramesAwaiting: 0,
-        diagnosticJobsAwaiting: Int.max,
-        availableSlots: Int.max
-      )
-    )
-    XCTAssertEqual(diagnosticsOnly.diagnosticJobsAdmitted, Int.max)
-    XCTAssertEqual(diagnosticsOnly.diagnosticJobsDropped, 0)
+    XCTAssertEqual(saturated.admission.recordedFramesAdmitted, maximum)
+    XCTAssertEqual(saturated.admission.diagnosticJobsAdmitted, 0)
+    XCTAssertEqual(saturated.admission.recordedFramesDeferred, 0)
+    XCTAssertEqual(saturated.admission.diagnosticJobsDropped, maximum)
   }
 
   func testLiveFrameWindowRefusesEveryProvenanceAndOrderingViolation() throws {

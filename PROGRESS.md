@@ -372,3 +372,44 @@ This file is append-only. Each entry records delivered behavior, exact verificat
 ### Next item selected by `GOAL.md` section 10.1
 
 - Continue Tier 1 at item 7 with invariant **I3**, "diagnostic work drops before recorded frames". `CaptureAdmissionPolicy` already encodes the arithmetic and is attacked by 32,768 cases, but there is no typed notion of a component under backpressure, no operational event when diagnostics are dropped, no alert contract, and no runbook. Give I3 the same five answers I2 now has, then continue through I1 and I4 through I8 by the same standard.
+
+## 2026-08-10T21:40:00Z — Tier 1, invariant I3: diagnostics cannot starve a recorded frame
+
+### Why this was the selected item
+
+- Section 10.1 item 7, continuing Tier 1. I3 already had correct arithmetic and a 32,768-case attack, but four of Tier 1's five questions were unanswered: no type made a starving admission unrepresentable, no component-failure scenario attacked it, no operational event recorded the decision, and no alert or runbook existed.
+
+### The gap this closed
+
+- `CaptureAdmissionPolicy.decide` computed the right answer, but `CaptureAdmission` was an ordinary public struct: any code in the package could build one that admitted diagnostic work while recorded frames waited, and nothing downstream could tell the difference. The invariant lived in one function rather than in the type.
+- Capture pressure was not modeled at all. Under thermal throttling or a storage stall the policy would still hand leftover capacity to diagnostics, competing with the recorder for exactly the margin the recorder needs.
+- `CaptureLoad` accepted any non-negative count including `Int.max`, so a corrupted count entered the arithmetic instead of being refused.
+
+### Behavior delivered
+
+- `Sources/CameraDomain/CaptureBackpressure.swift` now owns admission, separated from frame provenance in `LiveFrameEvidence.swift`. `CaptureAdmission` has only a `fileprivate` initializer, so `CaptureAdmissionPolicy` is its sole producer, and `starvesRecordedFrames` names the forbidden condition as a checkable property.
+- `CapturePressure` (nominal, thermalThrottling, storageBandwidthLimited, analysisBacklog, sessionRestarting) is a required field of `CaptureLoad`. Under any non-nominal pressure diagnostics receive **zero** capacity, so the remaining margin stays with the recorder rather than being shared with work that can be redone on the next frame. This is a designed refusal, not a heuristic.
+- `CaptureLoad.maximumQueueDepth` is 1,000,000. A larger count, including `Int.max`, is refused as `camera.capture_load.queue_depth_too_large` rather than being clamped or saturated: a depth that cannot occur in a real pipeline is corrupted state, not a large number.
+- `postconditionHolds` re-derives conservation of both queues, the capacity bound, the recorded-first rule, the pressure rule, and the absence of starvation, independently of the arithmetic it guards. On disagreement the policy falls back to admitting only recorded frames, drops every diagnostic job, and emits `OperationalEvent.invariantViolated` with invariant `I3` and guard `captureAdmissionPostcondition`.
+- Every decision now ships `OperationalEvent.captureAdmissionDecided` with scalar counts and a closed `CapturePressure`; no frame, buffer, or identifier crosses that boundary, which keeps I5 intact.
+- `docs/runbooks/capture-admission.md` records the encodings, the attacking tests with declared case counts, the fail-closed boundary behaviour, and three alerts: `capture_admission_invariant_violated` at severity 1 with a threshold of one event and an instruction never to silence it, `recorded_frames_deferred_rate` at severity 2 with **no threshold declared because none has been measured on hardware**, and an informational cross-check against the I2 runbook that names disagreement between the two views as a defect.
+
+### Commands run and evidence
+
+- `xcrun swift test` passed 66/66 XCTest methods, up from 62. The I3 matrix grew from 32,768 to 163,840 declared cases by adding the five pressure values, and it now also asserts that zero cells starve recorded frames and that the guard accepts every cell the policy produced.
+- New attacks: `testNonNominalPressureStopsDiagnosticWorkEntirely_4DistinctPressures`, `testNoCapacityDefersEveryRecordedFrameAndRunsNoDiagnostics`, `testThePostconditionGuardRejectsStarvationAndMiscounting`, `testQueueDepthsAboveTheSupportedMaximumAreRefused_6DistinctCases`, and `testEveryDecisionRecordsScalarCountsAndNoViolation`.
+- **A test was replaced, not removed.** `testAdmissionArithmeticHandlesIntegerExtremesWithoutOverflow` asserted saturating behaviour at `Int.max`. `Int.max` is now refused at the ingestion boundary, so that assertion is no longer meaningful; the replacement asserts both the refusal above the bound and exact arithmetic at the bound. This is a strictly stronger boundary, not a weakened one.
+- `make format`, `make lint`, and `make verify-all` passed; `verify-all` reported `tracked-content=stable index=stable untracked-content=stable ignored-artifacts=allowlisted services=ownership-stopped`.
+- GitHub Actions run for the preceding commit `480436c` concluded `success`, so hosted verification stayed green across the I2 slice.
+
+### What is now true that was not true before
+
+- An admission that runs diagnostic work while a recorded frame waits cannot be constructed, is rejected by an independent guard if the arithmetic ever produces one, and would raise a named severity-1 signal with a written response. Under any capture pressure, diagnostics stop entirely rather than competing for the recorder's margin.
+
+### What is still not true
+
+- No `AVCaptureSession` adapter calls this policy, no frame has been recorded, no capacity figure has been measured, and no telemetry leaves the process. Invariants I1 and I4 through I8 still lack this treatment. Every release gate remains red and the repository remains not in production.
+
+### Next item selected by `GOAL.md` section 10.1
+
+- Continue Tier 1 with invariant **I5**, "no frame pixels enter analytics or RevenueCat attributes", taken ahead of I1 and I4 because it is the one invariant whose violation is irreversible for the user: a leaked frame cannot be recalled from a provider. `OperationalEvent` and `PurchaseAttributeSnapshot` are already closed scalar-only types, but there is no compile-time boundary test proving a frame type cannot be reached from a telemetry payload, no runtime audit of a serialized payload, and no alert or runbook. Give I5 the same five answers, then continue with I1, I4, I6, I7, and I8.

@@ -97,7 +97,14 @@ Technology choices are constraints, not decorations. A dependency is accepted on
 
 Any change that can violate an invariant requires a written design review, tests demonstrating preservation under failure, and an explicit update to this README and AGENTS.md.
 
-Invariant 2 is additionally encoded in `Sources/AnalysisDomain/RecordingConfidence.swift`, where a single gate is the only producer of the only green state, a stale or component-failure condition withdraws it, and an independent postcondition refuses and reports rather than letting a green value through. Its encodings, property attacks, boundary behaviour, and alert contract are recorded in [docs/runbooks/recording-confidence.md](./docs/runbooks/recording-confidence.md). That alert contract is defined and tested but not yet wired to a live destination, because no application target or deployed environment exists.
+Invariant 2 is additionally encoded in `Sources/AnalysisDomain/RecordingConfidence.swift`, where a single gate is the only producer of the only green state, a stale or component-failure condition withdraws it, and an independent postcondition refuses and reports rather than letting a green value through. Invariant 3 is encoded in `Sources/CameraDomain/CaptureBackpressure.swift`, where only the admission policy can construct an admission, an admission that runs diagnostic work while a recorded frame waits is refused by an independent postcondition, and any non-nominal capture pressure removes diagnostic capacity entirely.
+
+| Invariant | Encoding | Runbook and alert contract |
+|---|---|---|
+| I2 — recording confidence never falsely green | `AnalysisDomain/RecordingConfidence.swift` | [docs/runbooks/recording-confidence.md](./docs/runbooks/recording-confidence.md) |
+| I3 — diagnostics drop before recorded frames | `CameraDomain/CaptureBackpressure.swift` | [docs/runbooks/capture-admission.md](./docs/runbooks/capture-admission.md) |
+
+Both alert contracts are defined and tested but **not wired to a live destination**, because no application target, capture session, or deployed environment exists. The remaining invariants do not yet have this treatment.
 
 ## Security, privacy, and safety
 

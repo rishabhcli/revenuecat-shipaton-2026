@@ -134,51 +134,6 @@ public struct LiveFrameWindow: Sendable, Equatable {
   }
 }
 
-/// Bounded admission policy that protects recorded frames before diagnostics.
-public struct CaptureLoad: Sendable, Equatable {
-  public let recordedFramesAwaiting: Int
-  public let diagnosticJobsAwaiting: Int
-  public let availableSlots: Int
-
-  public init(
-    recordedFramesAwaiting: Int,
-    diagnosticJobsAwaiting: Int,
-    availableSlots: Int
-  ) throws {
-    guard recordedFramesAwaiting >= 0,
-      diagnosticJobsAwaiting >= 0,
-      availableSlots >= 0
-    else {
-      throw CameraDomainError.negativeQueueCount
-    }
-    self.recordedFramesAwaiting = recordedFramesAwaiting
-    self.diagnosticJobsAwaiting = diagnosticJobsAwaiting
-    self.availableSlots = availableSlots
-  }
-}
-
-public struct CaptureAdmission: Sendable, Equatable {
-  public let recordedFramesAdmitted: Int
-  public let diagnosticJobsAdmitted: Int
-  public let recordedFramesDeferred: Int
-  public let diagnosticJobsDropped: Int
-}
-
-public enum CaptureAdmissionPolicy {
-  public static func decide(for load: CaptureLoad) -> CaptureAdmission {
-    let recordedAdmitted = min(load.recordedFramesAwaiting, load.availableSlots)
-    let remainingSlots = load.availableSlots - recordedAdmitted
-    let diagnosticsAdmitted = min(load.diagnosticJobsAwaiting, remainingSlots)
-
-    return CaptureAdmission(
-      recordedFramesAdmitted: recordedAdmitted,
-      diagnosticJobsAdmitted: diagnosticsAdmitted,
-      recordedFramesDeferred: load.recordedFramesAwaiting - recordedAdmitted,
-      diagnosticJobsDropped: load.diagnosticJobsAwaiting - diagnosticsAdmitted
-    )
-  }
-}
-
 public enum CameraDomainError: CodedDomainError, Equatable {
   case emptyFrameWindow
   case frameWindowTooLarge(maximum: Int)
@@ -189,6 +144,7 @@ public enum CameraDomainError: CodedDomainError, Equatable {
   case nonIncreasingIssuedTimestamp
   case sequenceNumberExhausted
   case negativeQueueCount
+  case queueDepthAboveSupportedMaximum(maximum: Int)
 
   public var code: String {
     switch self {
@@ -201,6 +157,7 @@ public enum CameraDomainError: CodedDomainError, Equatable {
     case .nonIncreasingIssuedTimestamp: "camera.frame_issuer.timestamp_not_increasing"
     case .sequenceNumberExhausted: "camera.frame_issuer.sequence_exhausted"
     case .negativeQueueCount: "camera.capture_load.negative_count"
+    case .queueDepthAboveSupportedMaximum: "camera.capture_load.queue_depth_too_large"
     }
   }
 
@@ -224,6 +181,8 @@ public enum CameraDomainError: CodedDomainError, Equatable {
       "The live capture sequence-number space is exhausted."
     case .negativeQueueCount:
       "Capture queue counts must not be negative."
+    case .queueDepthAboveSupportedMaximum(let maximum):
+      "Capture queue counts must not exceed \(maximum) entries."
     }
   }
 }

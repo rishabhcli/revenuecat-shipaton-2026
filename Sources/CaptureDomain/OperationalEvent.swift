@@ -6,6 +6,7 @@ public enum OperationalEvent: Sendable, Equatable {
   case correctionAssessed(CorrectionAssessedEvent)
   case processingRefused(reason: ProcessingRefusal)
   case recordingConfidenceEvaluated(RecordingConfidenceEvent)
+  case captureAdmissionDecided(CaptureAdmissionEvent)
   case invariantViolated(InvariantViolationEvent)
 
   public enum CorrectionOutcome: String, Sendable, Equatable {
@@ -58,6 +59,44 @@ public enum DomainInvariant: String, Sendable, Equatable, CaseIterable {
 /// The specific runtime guard that detected a violation.
 public enum InvariantGuard: String, Sendable, Equatable, CaseIterable {
   case recordingConfidencePostcondition
+  case captureAdmissionPostcondition
+}
+
+/// Why capture capacity is constrained at this moment.
+///
+/// A recorded frame is irreplaceable: once it is not written it is gone from
+/// the user's take. Diagnostic work is recomputable from the next frame.
+/// Pressure is therefore an input to admission, not a report about it.
+public enum CapturePressure: String, Sendable, Equatable, CaseIterable {
+  case nominal
+  case thermalThrottling
+  case storageBandwidthLimited
+  case analysisBacklog
+  case sessionRestarting
+}
+
+/// Scalar-only record of one capacity decision. Counts and a closed pressure
+/// value only; no frame, buffer, or identifier crosses this boundary.
+public struct CaptureAdmissionEvent: Sendable, Equatable {
+  public let pressure: CapturePressure
+  public let recordedFramesAdmitted: Int
+  public let recordedFramesDeferred: Int
+  public let diagnosticJobsAdmitted: Int
+  public let diagnosticJobsDropped: Int
+
+  package init(
+    pressure: CapturePressure,
+    recordedFramesAdmitted: Int,
+    recordedFramesDeferred: Int,
+    diagnosticJobsAdmitted: Int,
+    diagnosticJobsDropped: Int
+  ) {
+    self.pressure = pressure
+    self.recordedFramesAdmitted = recordedFramesAdmitted
+    self.recordedFramesDeferred = recordedFramesDeferred
+    self.diagnosticJobsAdmitted = diagnosticJobsAdmitted
+    self.diagnosticJobsDropped = diagnosticJobsDropped
+  }
 }
 
 /// Emitted only when a runtime guard proves an invariant was about to be
